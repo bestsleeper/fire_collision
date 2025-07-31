@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>산불 시뮬레이터 - 단순화</title>
+<style>
+  body{font-family:sans-serif;text-align:center;}
+  canvas{border:1px solid #000;background:#f0f8ff;display:block;margin:0 auto;}
+  #controls{margin:10px auto;display:inline-block;}
+  label{margin-right:10px;}
+</style>
+</head>
+<body>
+<h2>🔥 산불 시뮬레이터 (충돌감지 강조)</h2>
+<div id="controls">
+  <label>바람:
+    <select id="windDir">
+      <option value="none">없음</option>
+      <option value="right">→</option>
+      <option value="left">←</option>
+      <option value="up">↑</option>
+      <option value="down">↓</option>
+    </select>
+  </label>
+  <label>습도:
+    <input type="range" id="humidity" min="0" max="1" step="0.1" value="0.3">
+    <span id="humVal">0.3</span>
+  </label>
+  <button id="ignite">점화</button>
+  <button id="reset">초기화</button>
+</div>
+<canvas id="canvas" width="800" height="600"></canvas>
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+let wind = {direction: 'none', effect: 0.5};
+let humidity = 0.3;
+let trees = [], fireballs = [];
+
+class Tree {
+  constructor(x, y) {
+    this.x = x; this.y = y; this.r = 10;
+    this.onFire = false; this.burned = false;
+  }
+  draw() {
+    ctx.fillStyle = this.burned ? 'gray' : this.onFire ? 'red' : 'green';
+    ctx.beginPath(); ctx.arc(this.x, this.y, this.r, 0, Math.PI*2); ctx.fill();
+  }
+}
+
+class Fireball {
+  constructor(x, y, dx, dy) {
+    const f = getWindFactor(dx, dy);
+    this.x = x; this.y = y;
+    this.dx = dx * 2 * f; this.dy = dy * 2 * f;
+    this.r = 4; this.active = true;
+  }
+  update() { this.x += this.dx; this.y += this.dy; }
+  draw() {
+    ctx.fillStyle = 'orange';
+    ctx.beginPath(); ctx.arc(this.x, this.y, this.r, 0, Math.PI*2); ctx.fill();
+  }
+}
+
+function getWindFactor(dx, dy) {
+  if(wind.direction==='right'&&dx>0) return 1+wind.effect;
+  if(wind.direction==='left'&&dx<0) return 1+wind.effect;
+  if(wind.direction==='down'&&dy>0) return 1+wind.effect;
+  if(wind.direction==='up'&&dy<0) return 1+wind.effect;
+  return 1;
+}
+
+function detectCollision(ball, tree) {
+  const dx = ball.x - tree.x;
+  const dy = ball.y - tree.y;
+  return Math.hypot(dx, dy) < ball.r + tree.r;
+}
+
+function spread(tree) {
+  tree.onFire = false; tree.burned = true;
+  [[1,0],[-1,0],[0,1],[0,-1]].forEach(d => {
+    fireballs.push(new Fireball(tree.x, tree.y, d[0], d[1]));
+  });
+}
+
+function update() {
+  fireballs.forEach(b => {
+    if(!b.active) return;
+    b.update();
+    trees.forEach(t => {
+      if(!t.burned && detectCollision(b, t)) {
+        b.active = false; t.onFire = true;
+        setTimeout(() => spread(t), 300 + humidity*700);
+      }
+    });
+  });
+  fireballs = fireballs.filter(b => b.active && b.x>=0 && b.x<=canvas.width && b.y>=0 && b.y<=canvas.height);
+}
+
+function draw() {
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  trees.forEach(t => t.draw());
+  fireballs.forEach(f => f.draw());
+}
+
+function loop() { update(); draw(); requestAnimationFrame(loop); }
+
+function plantTrees() {
+  trees = [];
+  for(let i=0; i<100; i++) {
+    trees.push(new Tree(Math.random()*canvas.width, Math.random()*canvas.height));
+  }
+}
+
+document.getElementById('ignite').onclick = () => {
+  const t = trees[Math.floor(Math.random()*trees.length)];
+  t.onFire = true; spread(t);
+};
+
+document.getElementById('reset').onclick = () => { fireballs=[]; plantTrees(); };
+
+document.getElementById('windDir').onchange = e => wind.direction = e.target.value;
+
+document.getElementById('humidity').oninput = e => {
+  humidity = parseFloat(e.target.value);
+  document.getElementById('humVal').innerText = humidity.toFixed(1);
+};
+
+plantTrees(); loop();
+</script>
+</body>
+</html>
