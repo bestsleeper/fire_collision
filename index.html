@@ -1,132 +1,285 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-<meta charset="UTF-8">
-<title>산불 시뮬레이터 - 단순화</title>
-<style>
-  body{font-family:sans-serif;text-align:center;}
-  canvas{border:1px solid #000;background:#f0f8ff;display:block;margin:0 auto;}
-  #controls{margin:10px auto;display:inline-block;}
-  label{margin-right:10px;}
-</style>
+  <meta charset="UTF-8">
+  <title>산불 확산 시뮬레이션 (픽셀 기반)</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      display: grid;
+      grid-template-columns: 250px 1fr;
+      height: 100vh;
+      font-family: sans-serif;
+    }
+    #sidebar {
+      border-right: 1px solid #ccc;
+      padding: 20px;
+      box-sizing: border-box;
+    }
+    #sidebar h2 {
+      margin-top: 0;
+    }
+    .control-group {
+      margin: 20px 0;
+    }
+    label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: bold;
+    }
+    #compass {
+      width: 200px;
+      height: 200px;
+      border: 1px solid #000;
+      border-radius: 50%;
+      cursor: crosshair;
+      display: block;
+      margin: 0 auto 20px;
+    }
+    #humidity-slider {
+      transform: rotate(-90deg);
+      width: 150px;
+      margin-top: 10px;
+    }
+    button {
+      padding: 5px 10px;
+      margin-right: 10px;
+      font-size: 14px;
+    }
+    #main {
+      position: relative;
+      overflow: hidden;
+    }
+    #canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+  </style>
 </head>
 <body>
-<h2>🔥 산불 시뮬레이터 (충돌감지 강조)</h2>
-<div id="controls">
-  <label>바람:
-    <select id="windDir">
-      <option value="none">없음</option>
-      <option value="right">→</option>
-      <option value="left">←</option>
-      <option value="up">↑</option>
-      <option value="down">↓</option>
-    </select>
-  </label>
-  <label>습도:
-    <input type="range" id="humidity" min="0" max="1" step="0.1" value="0.3">
-    <span id="humVal">0.3</span>
-  </label>
-  <button id="ignite">점화</button>
-  <button id="reset">초기화</button>
-</div>
-<canvas id="canvas" width="800" height="600"></canvas>
-<script>
-const canvas = document.getElementById('canvas');
-const ctx = canvas.getContext('2d');
-let wind = {direction: 'none', effect: 0.5};
-let humidity = 0.3;
-let trees = [], fireballs = [];
+  <!-- 사이드바: 풍향, 풍속, 습도, 점화/초기화 -->
+  <div id="sidebar">
+    <h2>풍향 설정</h2>
+    <canvas id="compass" width="200" height="200"></canvas>
 
-class Tree {
-  constructor(x, y) {
-    this.x = x; this.y = y; this.r = 10;
-    this.onFire = false; this.burned = false;
-  }
-  draw() {
-    ctx.fillStyle = this.burned ? 'gray' : this.onFire ? 'red' : 'green';
-    ctx.beginPath(); ctx.arc(this.x, this.y, this.r, 0, Math.PI*2); ctx.fill();
-  }
-}
+    <div class="control-group">
+      <label for="windSpeed">풍속</label>
+      <input type="range" id="windSpeed" min="0" max="1" step="0.1" value="0.5">
+      <span id="windSpeedVal">0.5</span>
+    </div>
 
-class Fireball {
-  constructor(x, y, dx, dy) {
-    const f = getWindFactor(dx, dy);
-    this.x = x; this.y = y;
-    this.dx = dx * 2 * f; this.dy = dy * 2 * f;
-    this.r = 4; this.active = true;
-  }
-  update() { this.x += this.dx; this.y += this.dy; }
-  draw() {
-    ctx.fillStyle = 'orange';
-    ctx.beginPath(); ctx.arc(this.x, this.y, this.r, 0, Math.PI*2); ctx.fill();
-  }
-}
+    <div class="control-group">
+      <label for="humidity-slider">습도</label>
+      <input type="range" id="humidity-slider" min="0" max="1" step="0.1" value="0.3">
+      <span id="humVal">0.3</span>
+    </div>
 
-function getWindFactor(dx, dy) {
-  if(wind.direction==='right'&&dx>0) return 1+wind.effect;
-  if(wind.direction==='left'&&dx<0) return 1+wind.effect;
-  if(wind.direction==='down'&&dy>0) return 1+wind.effect;
-  if(wind.direction==='up'&&dy<0) return 1+wind.effect;
-  return 1;
-}
+    <div class="control-group">
+      <button id="ignite">🔥 점화</button>
+      <button id="reset">🔄 초기화</button>
+    </div>
+  </div>
 
-function detectCollision(ball, tree) {
-  const dx = ball.x - tree.x;
-  const dy = ball.y - tree.y;
-  return Math.hypot(dx, dy) < ball.r + tree.r;
-}
+  <!-- 메인 영역: 픽셀 기반 캔버스 -->
+  <div id="main">
+    <img id="map-img" src="firebackground.jpg" style="display:none;" crossorigin="anonymous">
+    <canvas id="canvas"></canvas>
+  </div>
 
-function spread(tree) {
-  tree.onFire = false; tree.burned = true;
-  [[1,0],[-1,0],[0,1],[0,-1]].forEach(d => {
-    fireballs.push(new Fireball(tree.x, tree.y, d[0], d[1]));
-  });
-}
+  <script>
+  // ========================
+  // 1. 전역 상수 및 변수
+  // ========================
+  const EMPTY = 0, TREE = 1, BURNING = 2, BURNED = 3;
+  let grid = [], cols, rows;
+  let windDir = { x: 0, y: -1 };
+  let windSpeed = 0.5;
+  let humidity = 0.3;
 
-function update() {
-  fireballs.forEach(b => {
-    if(!b.active) return;
-    b.update();
-    trees.forEach(t => {
-      if(!t.burned && detectCollision(b, t)) {
-        b.active = false; t.onFire = true;
-        setTimeout(() => spread(t), 300 + humidity*700);
+  // 캔버스 설정
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+  const mapImg = document.getElementById('map-img');
+
+  // 컴퍼스 설정
+  const compass = document.getElementById('compass');
+  const ctxC = compass.getContext('2d');
+
+  // ========================
+  // 2. 초기화 함수
+  // ========================
+  function init() {
+    // 이미지 로드 후 그리드 구축
+    mapImg.onload = () => {
+      cols = mapImg.naturalWidth;
+      rows = mapImg.naturalHeight;
+      canvas.width = cols;
+      canvas.height = rows;
+
+      // 숨김 캔버스에 이미지 그리기
+      const hidden = document.createElement('canvas');
+      hidden.width = cols;
+      hidden.height = rows;
+      const hctx = hidden.getContext('2d');
+      hctx.drawImage(mapImg, 0, 0);
+
+      // 픽셀 데이터 추출
+      const imgData = hctx.getImageData(0, 0, cols, rows).data;
+      grid = [];
+      for (let j = 0; j < rows; j++) {
+        grid[j] = [];
+        for (let i = 0; i < cols; i++) {
+          const idx = (j * cols + i) * 4;
+          const r = imgData[idx], g = imgData[idx + 1], b = imgData[idx + 2];
+          // 초록 계열 픽셀을 나무로 간주
+          grid[j][i] = (g > r && g > b) ? TREE : EMPTY;
+        }
       }
-    });
-  });
-  fireballs = fireballs.filter(b => b.active && b.x>=0 && b.x<=canvas.width && b.y>=0 && b.y<=canvas.height);
-}
 
-function draw() {
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-  trees.forEach(t => t.draw());
-  fireballs.forEach(f => f.draw());
-}
+      // 시뮬레이션 루프 시작
+      loop();
+    };
+    mapImg.src = 'firebackground.jpg';
 
-function loop() { update(); draw(); requestAnimationFrame(loop); }
-
-function plantTrees() {
-  trees = [];
-  for(let i=0; i<100; i++) {
-    trees.push(new Tree(Math.random()*canvas.width, Math.random()*canvas.height));
+    drawCompass();
   }
-}
 
-document.getElementById('ignite').onclick = () => {
-  const t = trees[Math.floor(Math.random()*trees.length)];
-  t.onFire = true; spread(t);
-};
+  // ========================
+  // 3. 컴퍼스 그리기 및 이벤트
+  // ========================
+  function drawCompass() {
+    const r = 90;
+    ctxC.clearRect(0, 0, 200, 200);
+    ctxC.beginPath();
+    ctxC.arc(100, 100, r, 0, Math.PI * 2);
+    ctxC.stroke();
+    ctxC.beginPath();
+    ctxC.moveTo(100, 100);
+    ctxC.lineTo(100 + windDir.x * r, 100 + windDir.y * r);
+    ctxC.strokeStyle = 'red';
+    ctxC.stroke();
+    ctxC.strokeStyle = '#000';
+  }
 
-document.getElementById('reset').onclick = () => { fireballs=[]; plantTrees(); };
+  compass.addEventListener('mousemove', e => {
+    const rect = compass.getBoundingClientRect();
+    const x = e.clientX - rect.left - 100;
+    const y = e.clientY - rect.top - 100;
+    const len = Math.hypot(x, y);
+    if (len > 0) {
+      windDir = { x: x / len, y: y / len };
+      drawCompass();
+    }
+  });
 
-document.getElementById('windDir').onchange = e => wind.direction = e.target.value;
+  // ========================
+  // 4. UI 이벤트
+  // ========================
+  document.getElementById('windSpeed').addEventListener('input', e => {
+    windSpeed = parseFloat(e.target.value);
+    document.getElementById('windSpeedVal').innerText = windSpeed.toFixed(1);
+  });
 
-document.getElementById('humidity').oninput = e => {
-  humidity = parseFloat(e.target.value);
-  document.getElementById('humVal').innerText = humidity.toFixed(1);
-};
+  document.getElementById('humidity-slider').addEventListener('input', e => {
+    humidity = parseFloat(e.target.value);
+    document.getElementById('humVal').innerText = humidity.toFixed(1);
+  });
 
-plantTrees(); loop();
-</script>
+  document.getElementById('ignite').addEventListener('click', ignite);
+  document.getElementById('reset').addEventListener('click', init);
+
+  // ========================
+  // 5. 시뮬레이션 로직
+  // ========================
+  function ignite() {
+    // 나무 중 랜덤으로 한 그루 점화
+    for (let attempt = 0; attempt < 1000; attempt++) {
+      const i = Math.floor(Math.random() * cols);
+      const j = Math.floor(Math.random() * rows);
+      if (grid[j][i] === TREE) {
+        grid[j][i] = BURNING;
+        break;
+      }
+    }
+  }
+
+  function spreadFire() {
+    const burningCells = [];
+    for (let j = 0; j < rows; j++) {
+      for (let i = 0; i < cols; i++) {
+        if (grid[j][i] === BURNING) burningCells.push({ i, j });
+      }
+    }
+
+    burningCells.forEach(cell => {
+      grid[cell.j][cell.i] = BURNED;
+      const dirs = [
+        { di:  1, dj:  0 },
+        { di: -1, dj:  0 },
+        { di:  0, dj:  1 },
+        { di:  0, dj: -1 }
+      ];
+      dirs.forEach(d => {
+        const ni = cell.i + d.di;
+        const nj = cell.j + d.dj;
+        if (ni >= 0 && ni < cols && nj >= 0 && nj < rows && grid[nj][ni] === TREE) {
+          const windFactor = 1 + windSpeed * (d.di * windDir.x + d.dj * windDir.y);
+          const delay = (300 + humidity * 700) / windFactor;
+          setTimeout(() => {
+            grid[nj][ni] = BURNING;
+          }, delay);
+        }
+      });
+    });
+  }
+
+  // ========================
+  // 6. 렌더링
+  // ========================
+  function update() {
+    spreadFire();
+  }
+
+  function draw() {
+    const imageData = ctx.createImageData(cols, rows);
+    for (let j = 0; j < rows; j++) {
+      for (let i = 0; i < cols; i++) {
+        const state = grid[j][i];
+        const idx = (j * cols + i) * 4;
+        if (state === TREE) {
+          imageData.data[idx]     = 0;   // R
+          imageData.data[idx + 1] = 255; // G
+          imageData.data[idx + 2] = 0;   // B
+          imageData.data[idx + 3] = 100; // Alpha
+        } else if (state === BURNING) {
+          imageData.data[idx]     = 255;
+          imageData.data[idx + 1] = 0;
+          imageData.data[idx + 2] = 0;
+          imageData.data[idx + 3] = 255;
+        } else if (state === BURNED) {
+          imageData.data[idx]     = 128;
+          imageData.data[idx + 1] = 128;
+          imageData.data[idx + 2] = 128;
+          imageData.data[idx + 3] = 200;
+        }
+        // EMPTY는 투명
+      }
+    }
+    ctx.putImageData(imageData, 0, 0);
+  }
+
+  function loop() {
+    update();
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  // ========================
+  // 7. 시작
+  // ========================
+  init();
+  </script>
 </body>
 </html>
