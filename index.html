@@ -1,19 +1,22 @@
 <!DOCTYPE html>
 <html lang="ko">
+
+  
 <head>
   <meta charset="UTF-8">
   <title>산불 확산 시뮬레이터 - 이펙트 개수 줄임</title>
   <style>
-    body { font-family: sans-serif; }
     canvas { border: 1px solid #888; background-color: #f0f8ff; display: block; }
     #controls { margin: 10px 0; }
   </style>
 </head>
+
+  
 <body>
-  <h2>🔥 산불 확산 시뮬레이터 (4방향 확산)</h2>
+  <h1>산불 확산 시뮬레이터 (4방향 확산)</h1>
 
   <div id="controls">
-    <label>🌬️ 바람 방향:
+    <label>바람 방향:
       <select id="windDir">
         <option value="none">없음</option>
         <option value="right">→ 오른쪽</option>
@@ -28,8 +31,8 @@
       <span id="humidityVal">0.3</span>
     </label>
 
-    <button onclick="ignite()">🔥 점화 시작</button>
-    <button onclick="reset()">🔄 초기화</button>
+    <button onclick="ignite()">점화 시작</button>
+    <button onclick="reset()">초기화</button>
   </div>
 
   <img id="terrainImg" src="terrain.JPEG" style="display:none;" crossorigin="anonymous">
