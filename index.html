@@ -1,212 +1,524 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-  <meta charset="UTF-8">
-  <title>산불 확산 시뮬레이션 (픽셀화된 위성사진)</title>
-  <style>
-    body {
-      margin: 0;
-      padding: 0;
-      display: flex;
-      height: 100vh;
-      font-family: sans-serif;
-    }
-    #sidebar {
-      width: 250px;
-      border-right: 1px solid #ccc;
-      padding: 20px;
-      box-sizing: border-box;
-    }
-    #sidebar h2 { margin-top: 0; }
-    .control-group { margin: 20px 0; }
-    label { display: block; margin-bottom: 5px; font-weight: bold; }
-    #compass {
-      width: 200px; height: 200px;
-      border: 1px solid #000; border-radius:50%;
-      cursor: crosshair; margin-bottom: 20px;
-    }
-    #humidity-slider { transform: rotate(-90deg); width:150px; margin-top:10px; }
-    button { padding:5px 10px; margin-right:10px; }
-    #main {
-      flex:1; position:relative;
-      background:#000;
-    }
-    #canvas {
-      display:block; width:100%; height:100%;
-    }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>산불 확산 시뮬레이션</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            background: #1a1a1a;
+            color: white;
+        }
+        .container {
+            display: flex;
+            gap: 20px;
+        }
+        .canvas-container {
+            position: relative;
+            border: 2px solid #444;
+        }
+        #gameCanvas {
+            cursor: crosshair;
+            image-rendering: pixelated;
+            image-rendering: -moz-crisp-edges;
+            image-rendering: crisp-edges;
+        }
+        .compass {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            width: 60px;
+            height: 60px;
+            background: rgba(0,0,0,0.7);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            color: white;
+        }
+        .compass-arrow {
+            position: absolute;
+            width: 2px;
+            height: 20px;
+            background: red;
+            transform-origin: bottom center;
+            transition: transform 0.3s;
+        }
+        .controls {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 8px;
+            min-width: 250px;
+            height: fit-content;
+        }
+        .control-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        select, input, button {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 10px;
+            border: 1px solid #555;
+            background: #333;
+            color: white;
+            border-radius: 4px;
+        }
+        button {
+            background: #4CAF50;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        .status {
+            background: #333;
+            padding: 10px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        .legend {
+            display: grid;
+            grid-template-columns: 20px 1fr;
+            gap: 5px;
+            align-items: center;
+            font-size: 12px;
+        }
+        .legend-color {
+            width: 16px;
+            height: 16px;
+            border: 1px solid #666;
+        }
+        .fire-circle {
+            position: absolute;
+            border: 2px dashed #ff6600;
+            border-radius: 50%;
+            pointer-events: none;
+            opacity: 0.7;
+        }
+    </style>
 </head>
 <body>
-  <div id="sidebar">
-    <h2>풍향 설정</h2>
-    <canvas id="compass" width="200" height="200"></canvas>
-
-    <div class="control-group">
-      <label for="windSpeed">풍속</label>
-      <input type="range" id="windSpeed" min="0" max="1" step="0.1" value="0.5">
-      <span id="windSpeedVal">0.5</span>
+    <h1>픽셀 기반 산불 확산 시뮬레이션</h1>
+    
+    <div class="container">
+        <div class="canvas-container">
+            <canvas id="gameCanvas" width="600" height="400"></canvas>
+            <div class="compass">
+                <div class="compass-arrow" id="windArrow"></div>
+                <div style="position: absolute; top: 5px;">N</div>
+                <div style="position: absolute; bottom: 5px;">S</div>
+                <div style="position: absolute; left: 5px;">W</div>
+                <div style="position: absolute; right: 5px;">E</div>
+            </div>
+        </div>
+        
+        <div class="controls">
+            <div class="control-group">
+                <label>풍향</label>
+                <select id="windDirection">
+                    <option value="north">북풍 (↓)</option>
+                    <option value="south">남풍 (↑)</option>
+                    <option value="east">동풍 (←)</option>
+                    <option value="west">서풍 (→)</option>
+                </select>
+            </div>
+            
+            <div class="control-group">
+                <label>습도</label>
+                <select id="humidity">
+                    <option value="1">매우 건조 (20%)</option>
+                    <option value="2">건조 (40%)</option>
+                    <option value="3" selected>보통 (60%)</option>
+                    <option value="4">습함 (80%)</option>
+                    <option value="5">매우 습함 (90%)</option>
+                </select>
+            </div>
+            
+            <div class="control-group">
+                <label>발화점 크기</label>
+                <input type="range" id="fireSize" min="10" max="50" value="20">
+                <span id="fireSizeValue">20px</span>
+            </div>
+            
+            <div class="control-group">
+                <button id="startBtn">시뮬레이션 시작</button>
+                <button id="pauseBtn">일시정지</button>
+                <button id="resetBtn">초기화</button>
+            </div>
+            
+            <div class="control-group">
+                <label>범례</label>
+                <div class="legend">
+                    <div class="legend-color" style="background: #228B22;"></div>
+                    <span>식생 (가연성)</span>
+                    <div class="legend-color" style="background: #8B4513;"></div>
+                    <span>토양</span>
+                    <div class="legend-color" style="background: #4169E1;"></div>
+                    <span>물</span>
+                    <div class="legend-color" style="background: #FF0000;"></div>
+                    <span>화재</span>
+                    <div class="legend-color" style="background: #FF6600;"></div>
+                    <span>연기</span>
+                </div>
+            </div>
+            
+            <div class="status" id="status">
+                좌클릭으로 발화점을 지정하세요
+            </div>
+        </div>
     </div>
 
-    <div class="control-group">
-      <label for="humidity-slider">습도</label>
-      <input type="range" id="humidity-slider" min="0" max="1" step="0.1" value="0.3">
-      <span id="humVal">0.3</span>
-    </div>
-
-    <div class="control-group">
-      <button id="ignite">🔥 점화</button>
-      <button id="reset">🔄 초기화</button>
-    </div>
-  </div>
-
-  <div id="main">
-    <canvas id="canvas"></canvas>
-  </div>
-
-  <script>
-  // -------------------
-  // 전역 변수
-  // -------------------
-  const EMPTY=0, TREE=1, BURNING=2, BURNED=3;
-  let grid=[], cols, rows;
-  let windDir={x:0,y:-1}, windSpeed=0.5, humidity=0.3;
-
-  const canvas=document.getElementById('canvas');
-  const ctx=canvas.getContext('2d');
-
-  // 픽셀화용 오프스크린 캔버스
-  const offCanvas=document.createElement('canvas');
-  const offCtx=offCanvas.getContext('2d');
-  const mapImg=new Image();
-  mapImg.src='firebackground.jpg';
-
-  // 픽셀 단위 크기 (예: 10px 블록)
-  const pixelSize=10;
-
-  // -------------------
-  // 초기화
-  // -------------------
-  mapImg.onload=()=>{
-    cols = Math.floor(mapImg.width / pixelSize);
-    rows = Math.floor(mapImg.height / pixelSize);
-    canvas.width = mapImg.width;
-    canvas.height = mapImg.height;
-    offCanvas.width = cols;
-    offCanvas.height = rows;
-
-    // 그리드 설정
-    grid = Array.from({ length: rows }, () => Array(cols).fill(EMPTY));
-
-    // 나무(초록) 픽셀 탐지
-    offCtx.drawImage(mapImg, 0, 0, cols, rows);
-    const data = offCtx.getImageData(0, 0, cols, rows).data;
-    for(let y=0; y<rows; y++){
-      for(let x=0; x<cols; x++){
-        const idx = (y*cols + x)*4;
-        const r=data[idx], g=data[idx+1], b=data[idx+2];
-        if(g>r && g>b) grid[y][x]=TREE;
-      }
-    }
-
-    // 시뮬레이션 시작
-    loop();
-  };
-
-  // -------------------
-  // 시뮬레이션 로직
-  // -------------------
-  function ignite(){
-    // 그리드 단위 랜덤 점화
-    for(let i=0;i<1000;i++){
-      const x=Math.floor(Math.random()*cols);
-      const y=Math.floor(Math.random()*rows);
-      if(grid[y][x]===TREE){ grid[y][x]=BURNING; break; }
-    }
-  }
-
-  function spreadFire(){
-    const burning=[];
-    for(let y=0;y<rows;y++){
-      for(let x=0;x<cols;x++){
-        if(grid[y][x]===BURNING) burning.push({x,y});
-      }
-    }
-    burning.forEach(cell=>{
-      grid[cell.y][cell.x]=BURNED;
-      [[1,0],[-1,0],[0,1],[0,-1]].forEach(d=>{
-        const nx=cell.x+d[0], ny=cell.y+d[1];
-        if(nx>=0&&nx<cols&&ny>=0&&ny<rows&&grid[ny][nx]===TREE){
-          const factor=1+windSpeed*(d[0]*windDir.x + d[1]*windDir.y);
-          const delay=(300+humidity*700)/factor;
-          setTimeout(()=> grid[ny][nx]=BURNING, delay);
+    <script>
+        class WildfireSimulation {
+            constructor() {
+                this.canvas = document.getElementById('gameCanvas');
+                this.ctx = this.canvas.getContext('2d');
+                
+                // 픽셀 크기 설정
+                this.pixelSize = 4;
+                this.gridWidth = this.canvas.width / this.pixelSize;
+                this.gridHeight = this.canvas.height / this.pixelSize;
+                
+                // 게임 상태
+                this.grid = [];
+                this.firePoints = [];
+                this.isRunning = false;
+                this.animationId = null;
+                
+                // 환경 설정
+                this.windDirection = 'north';
+                this.humidity = 3;
+                this.fireSpreadRate = 100; // ms
+                
+                // 지형 타입
+                this.TERRAIN = {
+                    VEGETATION: 1,  // 식생 (가연성)
+                    SOIL: 2,        // 토양
+                    WATER: 3,       // 물
+                    FIRE: 4,        // 화재
+                    SMOKE: 5        // 연기
+                };
+                
+                this.init();
+            }
+            
+            init() {
+                this.setupEventListeners();
+                this.generateTerrain();
+                this.updateWindDisplay();
+                this.render();
+            }
+            
+            setupEventListeners() {
+                // 캔버스 클릭 이벤트
+                this.canvas.addEventListener('click', (e) => {
+                    if (!this.isRunning) {
+                        this.setIgnitionPoint(e);
+                    }
+                });
+                
+                // 컨트롤 이벤트
+                document.getElementById('windDirection').addEventListener('change', (e) => {
+                    this.windDirection = e.target.value;
+                    this.updateWindDisplay();
+                });
+                
+                document.getElementById('humidity').addEventListener('change', (e) => {
+                    this.humidity = parseInt(e.target.value);
+                });
+                
+                document.getElementById('fireSize').addEventListener('input', (e) => {
+                    document.getElementById('fireSizeValue').textContent = e.target.value + 'px';
+                });
+                
+                document.getElementById('startBtn').addEventListener('click', () => {
+                    this.startSimulation();
+                });
+                
+                document.getElementById('pauseBtn').addEventListener('click', () => {
+                    this.pauseSimulation();
+                });
+                
+                document.getElementById('resetBtn').addEventListener('click', () => {
+                    this.resetSimulation();
+                });
+            }
+            
+            generateTerrain() {
+                this.grid = [];
+                for (let y = 0; y < this.gridHeight; y++) {
+                    this.grid[y] = [];
+                    for (let x = 0; x < this.gridWidth; x++) {
+                        // 랜덤하게 지형 생성
+                        const rand = Math.random();
+                        if (rand < 0.7) {
+                            this.grid[y][x] = this.TERRAIN.VEGETATION; // 70% 식생
+                        } else if (rand < 0.85) {
+                            this.grid[y][x] = this.TERRAIN.SOIL; // 15% 토양
+                        } else {
+                            this.grid[y][x] = this.TERRAIN.WATER; // 15% 물
+                        }
+                    }
+                }
+            }
+            
+            setIgnitionPoint(event) {
+                const rect = this.canvas.getBoundingClientRect();
+                const x = Math.floor((event.clientX - rect.left) / this.pixelSize);
+                const y = Math.floor((event.clientY - rect.top) / this.pixelSize);
+                const radius = parseInt(document.getElementById('fireSize').value) / this.pixelSize / 2;
+                
+                // 원형 발화점 생성
+                for (let dy = -radius; dy <= radius; dy++) {
+                    for (let dx = -radius; dx <= radius; dx++) {
+                        const distance = Math.sqrt(dx * dx + dy * dy);
+                        if (distance <= radius) {
+                            const px = x + dx;
+                            const py = y + dy;
+                            if (px >= 0 && px < this.gridWidth && py >= 0 && py < this.gridHeight) {
+                                if (this.grid[py][px] === this.TERRAIN.VEGETATION) {
+                                    this.grid[py][px] = this.TERRAIN.FIRE;
+                                    this.firePoints.push({x: px, y: py, age: 0});
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                this.render();
+                document.getElementById('status').textContent = `발화점 설정됨 (${x}, ${y})`;
+            }
+            
+            // AABB 충돌 감지
+            aabbCollision(rect1, rect2) {
+                return rect1.x < rect2.x + rect2.width &&
+                       rect1.x + rect1.width > rect2.x &&
+                       rect1.y < rect2.y + rect2.height &&
+                       rect1.y + rect1.height > rect2.y;
+            }
+            
+            // OBB 충돌 감지 (간단한 버전)
+            obbCollision(center1, size1, center2, size2) {
+                const dx = Math.abs(center1.x - center2.x);
+                const dy = Math.abs(center1.y - center2.y);
+                return dx < (size1.width + size2.width) / 2 && 
+                       dy < (size1.height + size2.height) / 2;
+            }
+            
+            spreadFire() {
+                const newFirePoints = [];
+                const spreadDirections = this.getSpreadDirections();
+                
+                for (let firePoint of this.firePoints) {
+                    const fireRect = {
+                        x: firePoint.x,
+                        y: firePoint.y,
+                        width: 1,
+                        height: 1
+                    };
+                    
+                    // 주변 8방향으로 확산 체크
+                    for (let direction of spreadDirections) {
+                        const newX = firePoint.x + direction.dx;
+                        const newY = firePoint.y + direction.dy;
+                        
+                        if (newX >= 0 && newX < this.gridWidth && 
+                            newY >= 0 && newY < this.gridHeight) {
+                            
+                            const targetRect = {
+                                x: newX,
+                                y: newY,
+                                width: 1,
+                                height: 1
+                            };
+                            
+                            // AABB 충돌 감지로 인접성 확인
+                            if (this.aabbCollision(fireRect, {
+                                x: newX - 0.1,
+                                y: newY - 0.1,
+                                width: 1.2,
+                                height: 1.2
+                            })) {
+                                
+                                if (this.grid[newY][newX] === this.TERRAIN.VEGETATION) {
+                                    // 습도와 풍향에 따른 확산 확률 계산
+                                    const spreadChance = this.calculateSpreadChance(direction.weight);
+                                    
+                                    if (Math.random() < spreadChance) {
+                                        this.grid[newY][newX] = this.TERRAIN.FIRE;
+                                        newFirePoints.push({x: newX, y: newY, age: 0});
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    // 화재 노화 처리
+                    firePoint.age++;
+                    if (firePoint.age > 50) { // 일정 시간 후 연기로 변환
+                        this.grid[firePoint.y][firePoint.x] = this.TERRAIN.SMOKE;
+                    }
+                }
+                
+                // 오래된 화재 제거 및 새로운 화재 추가
+                this.firePoints = this.firePoints.filter(fp => fp.age <= 50);
+                this.firePoints.push(...newFirePoints);
+            }
+            
+            getSpreadDirections() {
+                const baseDirections = [
+                    {dx: -1, dy: -1, weight: 0.7}, {dx: 0, dy: -1, weight: 1.0}, {dx: 1, dy: -1, weight: 0.7},
+                    {dx: -1, dy: 0, weight: 1.0},                                {dx: 1, dy: 0, weight: 1.0},
+                    {dx: -1, dy: 1, weight: 0.7},  {dx: 0, dy: 1, weight: 1.0},  {dx: 1, dy: 1, weight: 0.7}
+                ];
+                
+                // 풍향에 따른 가중치 조정
+                const windMultiplier = 2.0;
+                switch(this.windDirection) {
+                    case 'north': // 북풍 (남쪽으로)
+                        baseDirections[6].weight *= windMultiplier; // 남
+                        baseDirections[5].weight *= windMultiplier * 0.7; // 남서
+                        baseDirections[7].weight *= windMultiplier * 0.7; // 남동
+                        break;
+                    case 'south': // 남풍 (북쪽으로)
+                        baseDirections[1].weight *= windMultiplier; // 북
+                        baseDirections[0].weight *= windMultiplier * 0.7; // 북서
+                        baseDirections[2].weight *= windMultiplier * 0.7; // 북동
+                        break;
+                    case 'east': // 동풍 (서쪽으로)
+                        baseDirections[3].weight *= windMultiplier; // 서
+                        baseDirections[0].weight *= windMultiplier * 0.7; // 북서
+                        baseDirections[5].weight *= windMultiplier * 0.7; // 남서
+                        break;
+                    case 'west': // 서풍 (동쪽으로)
+                        baseDirections[4].weight *= windMultiplier; // 동
+                        baseDirections[2].weight *= windMultiplier * 0.7; // 북동
+                        baseDirections[7].weight *= windMultiplier * 0.7; // 남동
+                        break;
+                }
+                
+                return baseDirections;
+            }
+            
+            calculateSpreadChance(baseWeight) {
+                // 습도에 따른 확산 확률 (1: 매우 건조, 5: 매우 습함)
+                const humidityFactor = (6 - this.humidity) / 5; // 0.2 ~ 1.0
+                
+                return baseWeight * humidityFactor * 0.3; // 기본 확산 확률 30%
+            }
+            
+            updateWindDisplay() {
+                const arrow = document.getElementById('windArrow');
+                const rotations = {
+                    'north': '180deg',  // 북풍은 남쪽으로
+                    'south': '0deg',    // 남풍은 북쪽으로
+                    'east': '270deg',   // 동풍은 서쪽으로
+                    'west': '90deg'     // 서풍은 동쪽으로
+                };
+                arrow.style.transform = `rotate(${rotations[this.windDirection]})`;
+            }
+            
+            render() {
+                this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+                
+                // 픽셀 단위로 렌더링
+                for (let y = 0; y < this.gridHeight; y++) {
+                    for (let x = 0; x < this.gridWidth; x++) {
+                        const terrain = this.grid[y][x];
+                        let color;
+                        
+                        switch(terrain) {
+                            case this.TERRAIN.VEGETATION:
+                                color = '#228B22'; // 녹색
+                                break;
+                            case this.TERRAIN.SOIL:
+                                color = '#8B4513'; // 갈색
+                                break;
+                            case this.TERRAIN.WATER:
+                                color = '#4169E1'; // 파란색
+                                break;
+                            case this.TERRAIN.FIRE:
+                                color = '#FF0000'; // 빨간색
+                                break;
+                            case this.TERRAIN.SMOKE:
+                                color = '#FF6600'; // 주황색
+                                break;
+                            default:
+                                color = '#000000';
+                        }
+                        
+                        this.ctx.fillStyle = color;
+                        this.ctx.fillRect(
+                            x * this.pixelSize, 
+                            y * this.pixelSize, 
+                            this.pixelSize, 
+                            this.pixelSize
+                        );
+                    }
+                }
+            }
+            
+            startSimulation() {
+                if (this.firePoints.length === 0) {
+                    alert('먼저 발화점을 지정해주세요!');
+                    return;
+                }
+                
+                this.isRunning = true;
+                this.gameLoop();
+                document.getElementById('status').textContent = '시뮬레이션 실행 중...';
+            }
+            
+            pauseSimulation() {
+                this.isRunning = false;
+                if (this.animationId) {
+                    clearTimeout(this.animationId);
+                }
+                document.getElementById('status').textContent = '시뮬레이션 일시정지';
+            }
+            
+            resetSimulation() {
+                this.isRunning = false;
+                if (this.animationId) {
+                    clearTimeout(this.animationId);
+                }
+                this.firePoints = [];
+                this.generateTerrain();
+                this.render();
+                document.getElementById('status').textContent = '시뮬레이션 초기화됨';
+            }
+            
+            gameLoop() {
+                if (!this.isRunning) return;
+                
+                this.spreadFire();
+                this.render();
+                
+                // 화재가 모두 꺼졌는지 확인
+                if (this.firePoints.length === 0) {
+                    this.isRunning = false;
+                    document.getElementById('status').textContent = '시뮬레이션 완료 - 화재 소멸';
+                    return;
+                }
+                
+                this.animationId = setTimeout(() => this.gameLoop(), this.fireSpreadRate);
+            }
         }
-      });
-    });
-  }
-
-  // -------------------
-  // 렌더링
-  // -------------------
-  function draw(){
-    // 배경: 픽셀화된 사진
-    for(let y=0;y<rows;y++){
-      for(let x=0;x<cols;x++){
-        const px=offCtx.getImageData(x,y,1,1).data;
-        ctx.fillStyle=`rgba(${px[0]},${px[1]},${px[2]},1)`;
-        ctx.fillRect(x*pixelSize, y*pixelSize, pixelSize, pixelSize);
-      }
-    }
-    // 불 상태 그리기(투명 블렌딩)
-    for(let y=0;y<rows;y++){
-      for(let x=0;x<cols;x++){
-        const state=grid[y][x];
-        if(state===TREE){ ctx.fillStyle='rgba(0,255,0,0.3)'; }
-        else if(state===BURNING){ ctx.fillStyle='rgba(255,0,0,0.7)'; }
-        else if(state===BURNED){ ctx.fillStyle='rgba(128,128,128,0.5)'; }
-        else continue;
-        ctx.fillRect(x*pixelSize, y*pixelSize, pixelSize, pixelSize);
-      }
-    }
-  }
-
-  function loop(){
-    spreadFire();
-    draw();
-    requestAnimationFrame(loop);
-  }
-
-  // -------------------
-  // UI 이벤트
-  // -------------------
-  const compass=document.getElementById('compass'), ctxC=compass.getContext('2d');
-  function drawCompass(){ const r=90;
-    ctxC.clearRect(0,0,200,200);
-    ctxC.beginPath(); ctxC.arc(100,100,r,0,2*Math.PI); ctxC.stroke();
-    ctxC.beginPath(); ctxC.moveTo(100,100);
-    ctxC.lineTo(100+windDir.x*r,100+windDir.y*r);
-    ctxC.strokeStyle='red'; ctxC.stroke(); ctxC.strokeStyle='#000';
-  }
-  compass.addEventListener('mousemove',e=>{
-    const rect=compass.getBoundingClientRect();
-    const x=e.clientX-rect.left-100, y=e.clientY-rect.top-100;
-    const len=Math.hypot(x,y);
-    if(len>0){ windDir={x:x/len,y:y/len}; drawCompass(); }
-  }); drawCompass();
-
-  document.getElementById('windSpeed').oninput=e=>{
-    windSpeed=+e.target.value;
-    document.getElementById('windSpeedVal').innerText=windSpeed.toFixed(1);
-  };
-  document.getElementById('humidity-slider').oninput=e=>{
-    humidity=+e.target.value;
-    document.getElementById('humVal').innerText=humidity.toFixed(1);
-  };
-  document.getElementById('ignite').onclick=ignite;
-  document.getElementById('reset').onclick=()=>{
-    grid.forEach(row=>row.fill(EMPTY));
-    offCtx.drawImage(mapImg,0,0,cols,rows);
-    ignite();
-  };
-  </script>
+        
+        // 게임 시작
+        window.addEventListener('load', () => {
+            new WildfireSimulation();
+        });
+    </script>
 </body>
 </html>
