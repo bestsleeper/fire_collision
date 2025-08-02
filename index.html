@@ -53,14 +53,14 @@
             position: relative;
             border: 3px solid #495057;
             border-radius: 8px;
-            background-color: #fff;
+            background-color: #87CEEB;
             flex-grow: 1;
             display: flex;
             justify-content: center;
             align-items: center;
         }
         
-        #gameCanvas {
+        #terrainCanvas {
             cursor: crosshair;
             image-rendering: pixelated;
             image-rendering: -moz-crisp-edges;
@@ -190,22 +190,28 @@
             margin-top: 20px;
         }
         
-        .ignition-point {
-            position: absolute;
-            border: 3px dashed #ff6600;
-            border-radius: 50%;
-            pointer-events: none;
-            background-color: rgba(255, 102, 0, 0.2);
+        .terrain-info {
+            background-color: #fff3cd;
+            border: 1px solid #ffeaa7;
+            padding: 10px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            font-size: 12px;
         }
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>픽셀 기반 산불 확산 시뮬레이션</h1>
+        <h1>위성뷰 산불 확산 시뮬레이션</h1>
     </div>
     
     <div class="main-container">
         <div class="controls-panel">
+            <div class="terrain-info">
+                🗺️ 위에서 내려다보는 2D 지형<br>
+                초원, 도로, 건물, 산지가 표현됩니다
+            </div>
+            
             <div class="control-group">
                 <h3>풍향 설정</h3>
                 <select id="windDirection">
@@ -234,7 +240,7 @@
         
         <div class="map-section">
             <div class="canvas-wrapper">
-                <canvas id="simulationCanvas" width="800" height="500"></canvas>
+                <canvas id="terrainCanvas" width="900" height="600"></canvas>
                 <div class="compass">
                     <div class="north" id="compassN">N</div>
                     <div class="south" id="compassS">S</div>
@@ -251,10 +257,16 @@
                 </div>
                 
                 <div class="legend">
+                    <div class="legend-item" style="background-color: #90EE90;"></div>
+                    <span>초원 (가연성)</span>
                     <div class="legend-item" style="background-color: #228B22;"></div>
-                    <span>식생 (가연성)</span>
+                    <span>수풀 (매우 가연성)</span>
+                    <div class="legend-item" style="background-color: #8B7355;"></div>
+                    <span>산지 (보통 가연성)</span>
+                    <div class="legend-item" style="background-color: #696969;"></div>
+                    <span>도로 (불연성)</span>
                     <div class="legend-item" style="background-color: #8B4513;"></div>
-                    <span>토양</span>
+                    <span>건물 (빠른 연소)</span>
                     <div class="legend-item" style="background-color: #FF0000;"></div>
                     <span>화재</span>
                     <div class="legend-item" style="background-color: #FF6600;"></div>
@@ -265,209 +277,353 @@
     </div>
 
     <script>
-        class FireSpreadSimulator {
+        class TopDownFireSimulator {
             constructor() {
-                this.canvas = document.getElementById('simulationCanvas');
-                this.context = this.canvas.getContext('2d');
+                this.canvas = document.getElementById('terrainCanvas');
+                this.ctx = this.canvas.getContext('2d');
                 
-                this.pixelSize = 4;
-                this.gridWidth = Math.floor(this.canvas.width / this.pixelSize);
-                this.gridHeight = Math.floor(this.canvas.height / this.pixelSize);
+                this.pixelSize = 3;
+                this.mapWidth = Math.floor(this.canvas.width / this.pixelSize);
+                this.mapHeight = Math.floor(this.canvas.height / this.pixelSize);
                 
-                this.terrainGrid = [];
-                this.activeFireCells = [];
-                this.isSimulationRunning = false;
-                this.animationFrame = null;
-                this.ignitionPoints = [];
+                this.terrainMap = [];
+                this.fireCells = [];
+                this.simulationActive = false;
+                this.loopTimer = null;
+                this.ignitionMarkers = [];
                 
-                this.windDirection = 'north';
-                this.humidityLevel = 3;
-                this.spreadInterval = 150;
+                this.windDir = 'north';
+                this.moistureLevel = 3;
+                this.updateDelay = 120;
                 
-                this.CELL_TYPES = {
-                    VEGETATION: 1,
-                    SOIL: 2,
-                    FIRE: 3,
-                    SMOKE: 4
+                this.TERRAIN_TYPES = {
+                    GRASSLAND: 1,    // 초원
+                    FOREST: 2,       // 수풀/숲
+                    MOUNTAIN: 3,     // 산지
+                    ROAD: 4,         // 도로
+                    BUILDING: 5,     // 건물
+                    FIRE: 6,         // 화재
+                    SMOKE: 7         // 연기
                 };
                 
-                this.initializeSimulation();
+                this.BURN_RATES = {
+                    [this.TERRAIN_TYPES.GRASSLAND]: 0.35,   // 초원 - 보통
+                    [this.TERRAIN_TYPES.FOREST]: 0.45,      // 수풀 - 높음
+                    [this.TERRAIN_TYPES.MOUNTAIN]: 0.25,    // 산지 - 낮음
+                    [this.TERRAIN_TYPES.BUILDING]: 0.85     // 건물 - 매우 높음
+                };
+                
+                this.initializeSystem();
             }
             
-            initializeSimulation() {
-                this.setupEventHandlers();
-                this.generateTerrainMap();
-                this.updateCompassDisplay();
-                this.renderMap();
+            initializeSystem() {
+                this.setupControls();
+                this.createTopDownTerrain();
+                this.updateWindIndicator();
+                this.drawTerrain();
             }
             
-            setupEventHandlers() {
-                this.canvas.addEventListener('click', (event) => {
-                    if (!this.isSimulationRunning) {
-                        this.setIgnitionPoint(event);
+            setupControls() {
+                this.canvas.addEventListener('click', (evt) => {
+                    if (!this.simulationActive) {
+                        this.placeIgnitionPoint(evt);
                     }
                 });
                 
                 document.getElementById('windDirection').addEventListener('change', (e) => {
-                    this.windDirection = e.target.value;
-                    this.updateCompassDisplay();
+                    this.windDir = e.target.value;
+                    this.updateWindIndicator();
                 });
                 
                 document.getElementById('humidity').addEventListener('change', (e) => {
-                    this.humidityLevel = parseInt(e.target.value);
+                    this.moistureLevel = parseInt(e.target.value);
                 });
                 
                 document.getElementById('startSimulation').addEventListener('click', () => {
-                    this.beginSimulation();
+                    this.startFireSimulation();
                 });
                 
                 document.getElementById('pauseSimulation').addEventListener('click', () => {
-                    this.pauseSimulation();
+                    this.pauseFireSimulation();
                 });
                 
                 document.getElementById('resetSimulation').addEventListener('click', () => {
-                    this.resetSimulation();
+                    this.resetFireSimulation();
                 });
             }
             
-            generateTerrainMap() {
-                this.terrainGrid = [];
-                for (let row = 0; row < this.gridHeight; row++) {
-                    this.terrainGrid[row] = [];
-                    for (let col = 0; col < this.gridWidth; col++) {
-                        const randomValue = Math.random();
-                        if (randomValue < 0.75) {
-                            this.terrainGrid[row][col] = this.CELL_TYPES.VEGETATION;
-                        } else {
-                            this.terrainGrid[row][col] = this.CELL_TYPES.SOIL;
+            createTopDownTerrain() {
+                this.terrainMap = [];
+                
+                // 기본 초원으로 초기화
+                for (let y = 0; y < this.mapHeight; y++) {
+                    this.terrainMap[y] = [];
+                    for (let x = 0; x < this.mapWidth; x++) {
+                        this.terrainMap[y][x] = this.TERRAIN_TYPES.GRASSLAND;
+                    }
+                }
+                
+                // 산지 생성 (등고선 고려한 언덕/산)
+                this.generateMountainRanges();
+                
+                // 수풀/숲 지역 생성
+                this.generateForestAreas();
+                
+                // 도로 네트워크 생성
+                this.generateRoadNetwork();
+                
+                // 건물/마을 생성
+                this.generateBuildings();
+            }
+            
+            generateMountainRanges() {
+                // 여러 개의 산 생성
+                const mountainCenters = [
+                    {x: Math.floor(this.mapWidth * 0.2), y: Math.floor(this.mapHeight * 0.3)},
+                    {x: Math.floor(this.mapWidth * 0.7), y: Math.floor(this.mapHeight * 0.2)},
+                    {x: Math.floor(this.mapWidth * 0.6), y: Math.floor(this.mapHeight * 0.8)}
+                ];
+                
+                for (let center of mountainCenters) {
+                    const mountainSize = 40 + Math.random() * 30;
+                    
+                    for (let y = center.y - mountainSize; y < center.y + mountainSize; y++) {
+                        for (let x = center.x - mountainSize; x < center.x + mountainSize; x++) {
+                            if (x >= 0 && x < this.mapWidth && y >= 0 && y < this.mapHeight) {
+                                const distance = Math.sqrt((x - center.x) ** 2 + (y - center.y) ** 2);
+                                const noise = (Math.random() - 0.5) * 15;
+                                
+                                if (distance + noise < mountainSize) {
+                                    this.terrainMap[y][x] = this.TERRAIN_TYPES.MOUNTAIN;
+                                }
+                            }
                         }
                     }
                 }
             }
             
-            setIgnitionPoint(clickEvent) {
-                const canvasRect = this.canvas.getBoundingClientRect();
-                const clickX = Math.floor((clickEvent.clientX - canvasRect.left) / this.pixelSize);
-                const clickY = Math.floor((clickEvent.clientY - canvasRect.top) / this.pixelSize);
-                
-                if (clickX >= 0 && clickX < this.gridWidth && 
-                    clickY >= 0 && clickY < this.gridHeight) {
+            generateForestAreas() {
+                // 산지 주변과 랜덤 위치에 수풀 생성
+                for (let attempt = 0; attempt < 8; attempt++) {
+                    const centerX = Math.floor(Math.random() * this.mapWidth);
+                    const centerY = Math.floor(Math.random() * this.mapHeight);
+                    const forestSize = 20 + Math.random() * 25;
                     
-                    if (this.terrainGrid[clickY][clickX] === this.CELL_TYPES.VEGETATION) {
-                        this.terrainGrid[clickY][clickX] = this.CELL_TYPES.FIRE;
-                        this.activeFireCells.push({x: clickX, y: clickY, age: 0});
-                        
-                        this.ignitionPoints.push({
-                            x: clickX * this.pixelSize + this.pixelSize / 2,
-                            y: clickY * this.pixelSize + this.pixelSize / 2
-                        });
-                        
-                        this.renderMap();
-                        this.updateStatus(`발화점 설정: (${clickX}, ${clickY})`);
+                    for (let y = centerY - forestSize; y < centerY + forestSize; y++) {
+                        for (let x = centerX - forestSize; x < centerX + forestSize; x++) {
+                            if (x >= 0 && x < this.mapWidth && y >= 0 && y < this.mapHeight) {
+                                const distance = Math.sqrt((x - centerX) ** 2 + (y - centerY) ** 2);
+                                
+                                if (distance < forestSize && Math.random() > 0.3) {
+                                    if (this.terrainMap[y][x] === this.TERRAIN_TYPES.GRASSLAND) {
+                                        this.terrainMap[y][x] = this.TERRAIN_TYPES.FOREST;
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
             
-            checkAABBCollision(rect1, rect2) {
-                return rect1.x < rect2.x + rect2.width &&
-                       rect1.x + rect1.width > rect2.x &&
-                       rect1.y < rect2.y + rect2.height &&
-                       rect1.y + rect1.height > rect2.y;
-            }
-            
-            checkOBBCollision(center1, size1, center2, size2) {
-                const deltaX = Math.abs(center1.x - center2.x);
-                const deltaY = Math.abs(center1.y - center2.y);
-                return deltaX < (size1.width + size2.width) / 2 && 
-                       deltaY < (size1.height + size2.height) / 2;
-            }
-            
-            processFireSpread() {
-                const newFireCells = [];
-                const spreadDirections = this.calculateSpreadDirections();
+            generateRoadNetwork() {
+                // 수평 도로들
+                const horizontalRoads = [
+                    Math.floor(this.mapHeight * 0.25),
+                    Math.floor(this.mapHeight * 0.5),
+                    Math.floor(this.mapHeight * 0.75)
+                ];
                 
-                for (let fireCell of this.activeFireCells) {
-                    const currentFireRect = {
+                for (let roadY of horizontalRoads) {
+                    for (let x = 0; x < this.mapWidth; x++) {
+                        if (Math.random() > 0.1) { // 가끔 끊어지는 도로
+                            this.terrainMap[roadY][x] = this.TERRAIN_TYPES.ROAD;
+                            if (roadY > 0) this.terrainMap[roadY - 1][x] = this.TERRAIN_TYPES.ROAD;
+                        }
+                    }
+                }
+                
+                // 수직 도로들
+                const verticalRoads = [
+                    Math.floor(this.mapWidth * 0.3),
+                    Math.floor(this.mapWidth * 0.7)
+                ];
+                
+                for (let roadX of verticalRoads) {
+                    for (let y = 0; y < this.mapHeight; y++) {
+                        if (Math.random() > 0.1) {
+                            this.terrainMap[y][roadX] = this.TERRAIN_TYPES.ROAD;
+                            if (roadX > 0) this.terrainMap[y][roadX - 1] = this.TERRAIN_TYPES.ROAD;
+                        }
+                    }
+                }
+            }
+            
+            generateBuildings() {
+                // 도로 근처에 건물 클러스터 생성
+                const buildingClusters = [
+                    {x: Math.floor(this.mapWidth * 0.15), y: Math.floor(this.mapHeight * 0.4), size: 15},
+                    {x: Math.floor(this.mapWidth * 0.45), y: Math.floor(this.mapHeight * 0.6), size: 20},
+                    {x: Math.floor(this.mapWidth * 0.8), y: Math.floor(this.mapHeight * 0.3), size: 12}
+                ];
+                
+                for (let cluster of buildingClusters) {
+                    for (let attempt = 0; attempt < cluster.size; attempt++) {
+                        const buildingX = cluster.x + (Math.random() - 0.5) * 40;
+                        const buildingY = cluster.y + (Math.random() - 0.5) * 40;
+                        
+                        const buildingWidth = 2 + Math.floor(Math.random() * 3);
+                        const buildingHeight = 2 + Math.floor(Math.random() * 3);
+                        
+                        for (let by = buildingY; by < buildingY + buildingHeight; by++) {
+                            for (let bx = buildingX; bx < buildingX + buildingWidth; bx++) {
+                                if (bx >= 0 && bx < this.mapWidth && by >= 0 && by < this.mapHeight) {
+                                    if (this.terrainMap[Math.floor(by)][Math.floor(bx)] !== this.TERRAIN_TYPES.ROAD) {
+                                        this.terrainMap[Math.floor(by)][Math.floor(bx)] = this.TERRAIN_TYPES.BUILDING;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            placeIgnitionPoint(clickEvent) {
+                const rect = this.canvas.getBoundingClientRect();
+                const clickX = Math.floor((clickEvent.clientX - rect.left) / this.pixelSize);
+                const clickY = Math.floor((clickEvent.clientY - rect.top) / this.pixelSize);
+                
+                if (clickX >= 0 && clickX < this.mapWidth && clickY >= 0 && clickY < this.mapHeight) {
+                    const terrainType = this.terrainMap[clickY][clickX];
+                    
+                    if (terrainType !== this.TERRAIN_TYPES.ROAD) {
+                        this.terrainMap[clickY][clickX] = this.TERRAIN_TYPES.FIRE;
+                        this.fireCells.push({x: clickX, y: clickY, burnTime: 0});
+                        
+                        this.ignitionMarkers.push({
+                            x: clickX * this.pixelSize + this.pixelSize / 2,
+                            y: clickY * this.pixelSize + this.pixelSize / 2
+                        });
+                        
+                        this.drawTerrain();
+                        this.updateStatusMessage(`발화점 설정: (${clickX}, ${clickY})`);
+                    }
+                }
+            }
+            
+            detectAABBCollision(box1, box2) {
+                return box1.x < box2.x + box2.width &&
+                       box1.x + box1.width > box2.x &&
+                       box1.y < box2.y + box2.height &&
+                       box1.y + box1.height > box2.y;
+            }
+            
+            detectOBBCollision(center1, size1, center2, size2) {
+                const dx = Math.abs(center1.x - center2.x);
+                const dy = Math.abs(center1.y - center2.y);
+                return dx < (size1.width + size2.width) / 2 && 
+                       dy < (size1.height + size2.height) / 2;
+            }
+            
+            spreadFireToNeighbors() {
+                const newFireCells = [];
+                const directions = this.getWindInfluencedDirections();
+                
+                for (let fireCell of this.fireCells) {
+                    const fireBox = {
                         x: fireCell.x,
                         y: fireCell.y,
                         width: 1,
                         height: 1
                     };
                     
-                    for (let direction of spreadDirections) {
-                        const targetX = fireCell.x + direction.dx;
-                        const targetY = fireCell.y + direction.dy;
+                    for (let dir of directions) {
+                        const targetX = fireCell.x + dir.dx;
+                        const targetY = fireCell.y + dir.dy;
                         
-                        if (targetX >= 0 && targetX < this.gridWidth && 
-                            targetY >= 0 && targetY < this.gridHeight) {
+                        if (targetX >= 0 && targetX < this.mapWidth && 
+                            targetY >= 0 && targetY < this.mapHeight) {
                             
-                            const targetRect = {
+                            const targetBox = {
                                 x: targetX - 0.1,
                                 y: targetY - 0.1,
                                 width: 1.2,
                                 height: 1.2
                             };
                             
-                            if (this.checkAABBCollision(currentFireRect, targetRect)) {
-                                if (this.terrainGrid[targetY][targetX] === this.CELL_TYPES.VEGETATION) {
-                                    const spreadProbability = this.calculateSpreadProbability(direction.weight);
+                            if (this.detectAABBCollision(fireBox, targetBox)) {
+                                const targetTerrain = this.terrainMap[targetY][targetX];
+                                
+                                if (this.BURN_RATES[targetTerrain]) {
+                                    const burnChance = this.calculateBurnProbability(targetTerrain, dir.influence);
                                     
-                                    if (Math.random() < spreadProbability) {
-                                        this.terrainGrid[targetY][targetX] = this.CELL_TYPES.FIRE;
-                                        newFireCells.push({x: targetX, y: targetY, age: 0});
+                                    if (Math.random() < burnChance) {
+                                        this.terrainMap[targetY][targetX] = this.TERRAIN_TYPES.FIRE;
+                                        newFireCells.push({x: targetX, y: targetY, burnTime: 0});
                                     }
                                 }
                             }
                         }
                     }
                     
-                    fireCell.age++;
-                    if (fireCell.age > 40) {
-                        this.terrainGrid[fireCell.y][fireCell.x] = this.CELL_TYPES.SMOKE;
+                    fireCell.burnTime++;
+                    if (fireCell.burnTime > 35) {
+                        this.terrainMap[fireCell.y][fireCell.x] = this.TERRAIN_TYPES.SMOKE;
                     }
                 }
                 
-                this.activeFireCells = this.activeFireCells.filter(cell => cell.age <= 40);
-                this.activeFireCells.push(...newFireCells);
+                this.fireCells = this.fireCells.filter(cell => cell.burnTime <= 35);
+                this.fireCells.push(...newFireCells);
             }
             
-            calculateSpreadDirections() {
+            getWindInfluencedDirections() {
                 const baseDirections = [
-                    {dx: -1, dy: -1, weight: 0.6}, {dx: 0, dy: -1, weight: 1.0}, {dx: 1, dy: -1, weight: 0.6},
-                    {dx: -1, dy: 0, weight: 1.0},                               {dx: 1, dy: 0, weight: 1.0},
-                    {dx: -1, dy: 1, weight: 0.6},  {dx: 0, dy: 1, weight: 1.0},  {dx: 1, dy: 1, weight: 0.6}
+                    {dx: -1, dy: -1, influence: 0.6}, {dx: 0, dy: -1, influence: 1.0}, {dx: 1, dy: -1, influence: 0.6},
+                    {dx: -1, dy: 0, influence: 1.0},                                    {dx: 1, dy: 0, influence: 1.0},
+                    {dx: -1, dy: 1, influence: 0.6},  {dx: 0, dy: 1, influence: 1.0},  {dx: 1, dy: 1, influence: 0.6}
                 ];
                 
-                const windBoost = 1.8;
+                const windBoost = 2.2;
                 
-                if (this.windDirection === 'north') {
-                    baseDirections[6].weight *= windBoost;
-                    baseDirections[5].weight *= windBoost * 0.7;
-                    baseDirections[7].weight *= windBoost * 0.7;
-                } else if (this.windDirection === 'south') {
-                    baseDirections[1].weight *= windBoost;
-                    baseDirections[0].weight *= windBoost * 0.7;
-                    baseDirections[2].weight *= windBoost * 0.7;
-                } else if (this.windDirection === 'east') {
-                    baseDirections[3].weight *= windBoost;
-                    baseDirections[0].weight *= windBoost * 0.7;
-                    baseDirections[5].weight *= windBoost * 0.7;
-                } else if (this.windDirection === 'west') {
-                    baseDirections[4].weight *= windBoost;
-                    baseDirections[2].weight *= windBoost * 0.7;
-                    baseDirections[7].weight *= windBoost * 0.7;
+                switch (this.windDir) {
+                    case 'north':
+                        baseDirections[6].influence *= windBoost;
+                        baseDirections[5].influence *= windBoost * 0.7;
+                        baseDirections[7].influence *= windBoost * 0.7;
+                        break;
+                    case 'south':
+                        baseDirections[1].influence *= windBoost;
+                        baseDirections[0].influence *= windBoost * 0.7;
+                        baseDirections[2].influence *= windBoost * 0.7;
+                        break;
+                    case 'east':
+                        baseDirections[3].influence *= windBoost;
+                        baseDirections[0].influence *= windBoost * 0.7;
+                        baseDirections[5].influence *= windBoost * 0.7;
+                        break;
+                    case 'west':
+                        baseDirections[4].influence *= windBoost;
+                        baseDirections[2].influence *= windBoost * 0.7;
+                        baseDirections[7].influence *= windBoost * 0.7;
+                        break;
                 }
                 
                 return baseDirections;
             }
             
-            calculateSpreadProbability(baseWeight) {
-                const humidityFactor = (6 - this.humidityLevel) / 5;
-                return baseWeight * humidityFactor * 0.25;
+            calculateBurnProbability(terrainType, windInfluence) {
+                const baseBurnRate = this.BURN_RATES[terrainType];
+                const humidityEffect = (6 - this.moistureLevel) / 5;
+                
+                // 건물은 특별히 빠르게 번짐
+                if (terrainType === this.TERRAIN_TYPES.BUILDING) {
+                    return baseBurnRate * windInfluence * humidityEffect * 0.8;
+                }
+                
+                return baseBurnRate * windInfluence * humidityEffect * 0.4;
             }
             
-            updateCompassDisplay() {
-                const compassElements = {
+            updateWindIndicator() {
+                const windHighlight = {
                     'north': 'compassS',
                     'south': 'compassN', 
                     'east': 'compassW',
@@ -479,118 +635,127 @@
                     el.style.fontWeight = 'normal';
                 });
                 
-                const activeElement = document.getElementById(compassElements[this.windDirection]);
-                if (activeElement) {
-                    activeElement.style.color = '#ff6600';
-                    activeElement.style.fontWeight = 'bold';
+                const activeWind = document.getElementById(windHighlight[this.windDir]);
+                if (activeWind) {
+                    activeWind.style.color = '#ff6600';
+                    activeWind.style.fontWeight = 'bold';
                 }
             }
             
-            renderMap() {
-                this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
+            drawTerrain() {
+                this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
                 
-                for (let row = 0; row < this.gridHeight; row++) {
-                    for (let col = 0; col < this.gridWidth; col++) {
-                        const cellType = this.terrainGrid[row][col];
-                        let cellColor;
+                for (let y = 0; y < this.mapHeight; y++) {
+                    for (let x = 0; x < this.mapWidth; x++) {
+                        const terrain = this.terrainMap[y][x];
+                        let pixelColor;
                         
-                        switch (cellType) {
-                            case this.CELL_TYPES.VEGETATION:
-                                cellColor = '#228B22';
+                        switch (terrain) {
+                            case this.TERRAIN_TYPES.GRASSLAND:
+                                pixelColor = '#90EE90';  // 연한 초록 (초원)
                                 break;
-                            case this.CELL_TYPES.SOIL:
-                                cellColor = '#8B4513';
+                            case this.TERRAIN_TYPES.FOREST:
+                                pixelColor = '#228B22';  // 진한 초록 (수풀)
                                 break;
-                            case this.CELL_TYPES.FIRE:
-                                cellColor = '#FF0000';
+                            case this.TERRAIN_TYPES.MOUNTAIN:
+                                pixelColor = '#8B7355';  // 갈색 (산지)
                                 break;
-                            case this.CELL_TYPES.SMOKE:
-                                cellColor = '#FF6600';
+                            case this.TERRAIN_TYPES.ROAD:
+                                pixelColor = '#696969';  // 회색 (도로)
+                                break;
+                            case this.TERRAIN_TYPES.BUILDING:
+                                pixelColor = '#8B4513';  // 갈색 (건물)
+                                break;
+                            case this.TERRAIN_TYPES.FIRE:
+                                pixelColor = '#FF0000';  // 빨강 (화재)
+                                break;
+                            case this.TERRAIN_TYPES.SMOKE:
+                                pixelColor = '#FF6600';  // 주황 (연기)
                                 break;
                             default:
-                                cellColor = '#000000';
+                                pixelColor = '#000000';
                         }
                         
-                        this.context.fillStyle = cellColor;
-                        this.context.fillRect(
-                            col * this.pixelSize, 
-                            row * this.pixelSize, 
+                        this.ctx.fillStyle = pixelColor;
+                        this.ctx.fillRect(
+                            x * this.pixelSize, 
+                            y * this.pixelSize, 
                             this.pixelSize, 
                             this.pixelSize
                         );
                     }
                 }
                 
-                this.renderIgnitionMarkers();
+                this.drawIgnitionMarkers();
             }
             
-            renderIgnitionMarkers() {
-                this.context.strokeStyle = '#ff6600';
-                this.context.lineWidth = 2;
-                this.context.setLineDash([5, 5]);
+            drawIgnitionMarkers() {
+                this.ctx.strokeStyle = '#ff6600';
+                this.ctx.lineWidth = 2;
+                this.ctx.setLineDash([4, 4]);
                 
-                for (let point of this.ignitionPoints) {
-                    this.context.beginPath();
-                    this.context.arc(point.x, point.y, 15, 0, 2 * Math.PI);
-                    this.context.stroke();
+                for (let marker of this.ignitionMarkers) {
+                    this.ctx.beginPath();
+                    this.ctx.arc(marker.x, marker.y, 12, 0, 2 * Math.PI);
+                    this.ctx.stroke();
                 }
                 
-                this.context.setLineDash([]);
+                this.ctx.setLineDash([]);
             }
             
-            beginSimulation() {
-                if (this.activeFireCells.length === 0) {
+            startFireSimulation() {
+                if (this.fireCells.length === 0) {
                     alert('먼저 발화점을 지정해주세요!');
                     return;
                 }
                 
-                this.isSimulationRunning = true;
-                this.runSimulationLoop();
-                this.updateStatus('시뮬레이션 실행 중...');
+                this.simulationActive = true;
+                this.runSimulationCycle();
+                this.updateStatusMessage('시뮬레이션 실행 중...');
             }
             
-            pauseSimulation() {
-                this.isSimulationRunning = false;
-                if (this.animationFrame) {
-                    clearTimeout(this.animationFrame);
+            pauseFireSimulation() {
+                this.simulationActive = false;
+                if (this.loopTimer) {
+                    clearTimeout(this.loopTimer);
                 }
-                this.updateStatus('시뮬레이션 일시정지');
+                this.updateStatusMessage('시뮬레이션 일시정지');
             }
             
-            resetSimulation() {
-                this.isSimulationRunning = false;
-                if (this.animationFrame) {
-                    clearTimeout(this.animationFrame);
+            resetFireSimulation() {
+                this.simulationActive = false;
+                if (this.loopTimer) {
+                    clearTimeout(this.loopTimer);
                 }
-                this.activeFireCells = [];
-                this.ignitionPoints = [];
-                this.generateTerrainMap();
-                this.renderMap();
-                this.updateStatus('시뮬레이션 초기화됨');
+                this.fireCells = [];
+                this.ignitionMarkers = [];
+                this.createTopDownTerrain();
+                this.drawTerrain();
+                this.updateStatusMessage('시뮬레이션 초기화됨');
             }
             
-            runSimulationLoop() {
-                if (!this.isSimulationRunning) return;
+            runSimulationCycle() {
+                if (!this.simulationActive) return;
                 
-                this.processFireSpread();
-                this.renderMap();
+                this.spreadFireToNeighbors();
+                this.drawTerrain();
                 
-                if (this.activeFireCells.length === 0) {
-                    this.isSimulationRunning = false;
-                    this.updateStatus('시뮬레이션 완료 - 화재 소멸');
+                if (this.fireCells.length === 0) {
+                    this.simulationActive = false;
+                    this.updateStatusMessage('시뮬레이션 완료 - 모든 화재 진압됨');
                     return;
                 }
                 
-                this.animationFrame = setTimeout(() => this.runSimulationLoop(), this.spreadInterval);
+                this.loopTimer = setTimeout(() => this.runSimulationCycle(), this.updateDelay);
             }
             
-            updateStatus(message) {
+            updateStatusMessage(message) {
                 document.getElementById('statusDisplay').textContent = message;
             }
         }
         
         document.addEventListener('DOMContentLoaded', function() {
-            new FireSpreadSimulator();
+            new TopDownFireSimulator();
         });
     </script>
 </body>
