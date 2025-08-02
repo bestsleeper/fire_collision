@@ -223,6 +223,25 @@
             </div>
             
             <div class="control-group">
+                <h3>풍속 설정 (보퍼트 풍력계급)</h3>
+                <select id="windSpeed">
+                    <option value="0">0: 무풍 (Calm)</option>
+                    <option value="1">1: 실바람 (Light Air)</option>
+                    <option value="2">2: 남실바람 (Light Breeze)</option>
+                    <option value="3" selected>3: 산들바람 (Gentle Breeze)</option>
+                    <option value="4">4: 건들바람 (Moderate Breeze)</option>
+                    <option value="5">5: 쾌청한 바람 (Fresh Breeze)</option>
+                    <option value="6">6: 된바람 (Strong Breeze)</option>
+                    <option value="7">7: 센바람 (Near Gale)</option>
+                    <option value="8">8: 강풍 (Gale)</option>
+                    <option value="9">9: 강한 강풍 (Strong Gale)</option>
+                    <option value="10">10: 노대바람 (Storm)</option>
+                    <option value="11">11: 왕바람 (Violent Storm)</option>
+                    <option value="12">12: 삭풍 (Hurricane)</option>
+                </select>
+            </div>
+            
+            <div class="control-group">
                 <h3>습도 설정</h3>
                 <select id="humidity">
                     <option value="1">매우 건조 (20%)</option>
@@ -293,8 +312,28 @@
                 this.markers = [];
                 
                 this.wind = 'north';
+                this.windSpeed = 3;
                 this.moisture = 3;
-                this.tickRate = 120;
+                
+                // 풍속에 따라 시뮬레이션 속도를 조절하는 기능 추가
+                this.tickRate = 200 - this.windSpeed * 20;
+
+                // Beaufort Scale mapping (simplified)
+                this.beaufortScale = {
+                    0: 0.1,  // Calm
+                    1: 0.3,  // Light Air
+                    2: 0.5,  // Light Breeze
+                    3: 0.7,  // Gentle Breeze
+                    4: 1.0,  // Moderate Breeze (standard)
+                    5: 1.3,  // Fresh Breeze
+                    6: 1.7,  // Strong Breeze
+                    7: 2.2,  // Near Gale
+                    8: 2.8,  // Gale
+                    9: 3.5,  // Strong Gale
+                    10: 4.5, // Storm
+                    11: 5.5, // Violent Storm
+                    12: 7.0  // Hurricane
+                };
                 
                 // 지형 타입 정의
                 this.GRASS = 1;      // 초원
@@ -310,7 +349,7 @@
                     [this.GRASS]: 0.3,
                     [this.FOREST]: 0.5,
                     [this.MOUNTAIN]: 0.2,
-                    [this.HOUSE]: 0.9    // 건물은 매우 빠르게 타음!
+                    [this.HOUSE]: 0.9
                 };
                 
                 this.setup();
@@ -335,6 +374,12 @@
                 document.getElementById('windDirection').addEventListener('change', (e) => {
                     this.wind = e.target.value;
                     this.updateWindDisplay();
+                });
+                
+                // 풍속 변경 시 tickRate 업데이트 로직 추가
+                document.getElementById('windSpeed').addEventListener('change', (e) => {
+                    this.windSpeed = parseInt(e.target.value);
+                    this.tickRate = 200 - this.windSpeed * 20;
                 });
                 
                 // 습도 변경
@@ -508,7 +553,7 @@
                         });
                         
                         this.draw();
-                        this.updateStatus(`발화점 설정: (${x}, ${y})`);
+                        this.updateStatus('발화점 설정: (' + x + ', ' + y + ')');
                     }
                 }
             }
@@ -519,14 +564,6 @@
                        box1.x + box1.w > box2.x &&
                        box1.y < box2.y + box2.h &&
                        box1.y + box1.h > box2.y;
-            }
-            
-            // OBB 충돌 감지 함수
-            obbCollision(center1, size1, center2, size2) {
-                let dx = Math.abs(center1.x - center2.x);
-                let dy = Math.abs(center1.y - center2.y);
-                return dx < (size1.w + size2.w) / 2 && 
-                       dy < (size1.h + size2.h) / 2;
             }
             
             spreadFire() {
@@ -586,8 +623,9 @@
                     {dx: -1, dy: 0, wind: 1.0},                               {dx: 1, dy: 0, wind: 1.0},
                     {dx: -1, dy: 1, wind: 0.7},  {dx: 0, dy: 1, wind: 1.0},  {dx: 1, dy: 1, wind: 0.7}
                 ];
-                
-                let boost = 2.5; // 바람 가중치 증가!
+
+                let windFactor = this.beaufortScale[this.windSpeed];
+                let boost = windFactor / this.beaufortScale[4]; 
                 
                 // 바람 방향에 따른 가중치 적용
                 if (this.wind === 'north') {          // 북풍 -> 남쪽으로 확산
@@ -617,27 +655,25 @@
                 
                 // 건물은 특별히 빠르게 번짐
                 if (terrainType === this.HOUSE) {
-                    return baseRate * windEffect * humidityFactor * 0.7;
+                    return baseRate * windEffect * humidityFactor;
                 }
                 
-                return baseRate * windEffect * humidityFactor * 0.4;
+                return baseRate * windEffect * humidityFactor;
             }
             
             updateWindDisplay() {
                 let windMapping = {
-                    'north': 'compassS',   // 북풍이면 남쪽 화살표 강조
-                    'south': 'compassN',   // 남풍이면 북쪽 화살표 강조
-                    'east': 'compassW',    // 동풍이면 서쪽 화살표 강조
-                    'west': 'compassE'     // 서풍이면 동쪽 화살표 강조
+                    'north': 'compassS',
+                    'south': 'compassN',
+                    'east': 'compassW',
+                    'west': 'compassE'
                 };
                 
-                // 모든 방향 기본 스타일로 리셋
                 document.querySelectorAll('.compass div').forEach(el => {
                     el.style.color = 'white';
                     el.style.fontWeight = 'normal';
                 });
                 
-                // 현재 풍향 강조
                 let activeDir = document.getElementById(windMapping[this.wind]);
                 if (activeDir) {
                     activeDir.style.color = '#ff6600';
@@ -655,25 +691,25 @@
                         
                         switch (cell) {
                             case this.GRASS:
-                                color = '#90EE90';   // 연한 초록 (초원)
+                                color = '#90EE90';
                                 break;
                             case this.FOREST:
-                                color = '#228B22';   // 진한 초록 (수풀)
+                                color = '#228B22';
                                 break;
                             case this.MOUNTAIN:
-                                color = '#8B7355';   // 갈색 (산지)
+                                color = '#8B7355';
                                 break;
                             case this.ROAD:
-                                color = '#696969';   // 회색 (도로)
+                                color = '#696969';
                                 break;
                             case this.HOUSE:
-                                color = '#8B4513';   // 갈색 (건물)
+                                color = '#8B4513';
                                 break;
                             case this.FIRE:
-                                color = '#FF0000';   // 빨강 (화재)
+                                color = '#FF0000';
                                 break;
                             case this.SMOKE:
-                                color = '#FF6600';   // 주황 (연기)
+                                color = '#FF6600';
                                 break;
                             default:
                                 color = '#000000';
