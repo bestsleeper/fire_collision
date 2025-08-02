@@ -277,124 +277,126 @@
     </div>
 
     <script>
-        class TopDownFireSimulator {
+        class WildfireSimulator {
             constructor() {
                 this.canvas = document.getElementById('terrainCanvas');
                 this.ctx = this.canvas.getContext('2d');
                 
-                this.pixelSize = 3;
-                this.mapWidth = Math.floor(this.canvas.width / this.pixelSize);
-                this.mapHeight = Math.floor(this.canvas.height / this.pixelSize);
+                this.cellSize = 3;
+                this.mapW = Math.floor(this.canvas.width / this.cellSize);
+                this.mapH = Math.floor(this.canvas.height / this.cellSize);
                 
-                this.terrainMap = [];
-                this.fireCells = [];
-                this.simulationActive = false;
-                this.loopTimer = null;
-                this.ignitionMarkers = [];
+                this.terrain = [];
+                this.fires = [];
+                this.running = false;
+                this.timer = null;
+                this.markers = [];
                 
-                this.windDir = 'north';
-                this.moistureLevel = 3;
-                this.updateDelay = 120;
+                this.wind = 'north';
+                this.moisture = 3;
+                this.tickRate = 120;
                 
-                this.TERRAIN_TYPES = {
-                    GRASSLAND: 1,    // 초원
-                    FOREST: 2,       // 수풀/숲
-                    MOUNTAIN: 3,     // 산지
-                    ROAD: 4,         // 도로
-                    BUILDING: 5,     // 건물
-                    FIRE: 6,         // 화재
-                    SMOKE: 7         // 연기
+                // 지형 타입 정의
+                this.GRASS = 1;      // 초원
+                this.FOREST = 2;     // 수풀
+                this.MOUNTAIN = 3;   // 산지
+                this.ROAD = 4;       // 도로  
+                this.HOUSE = 5;      // 건물
+                this.FIRE = 6;       // 화재
+                this.SMOKE = 7;      // 연기
+                
+                // 연소 확률 설정
+                this.burnChance = {
+                    [this.GRASS]: 0.3,
+                    [this.FOREST]: 0.5,
+                    [this.MOUNTAIN]: 0.2,
+                    [this.HOUSE]: 0.9    // 건물은 매우 빠르게 타음!
                 };
                 
-                this.BURN_RATES = {
-                    [this.TERRAIN_TYPES.GRASSLAND]: 0.35,   // 초원 - 보통
-                    [this.TERRAIN_TYPES.FOREST]: 0.45,      // 수풀 - 높음
-                    [this.TERRAIN_TYPES.MOUNTAIN]: 0.25,    // 산지 - 낮음
-                    [this.TERRAIN_TYPES.BUILDING]: 0.85     // 건물 - 매우 높음
-                };
-                
-                this.initializeSystem();
+                this.setup();
             }
             
-            initializeSystem() {
-                this.setupControls();
-                this.createTopDownTerrain();
-                this.updateWindIndicator();
-                this.drawTerrain();
+            setup() {
+                this.bindEvents();
+                this.generateWorld();
+                this.updateWindDisplay();
+                this.draw();
             }
             
-            setupControls() {
-                this.canvas.addEventListener('click', (evt) => {
-                    if (!this.simulationActive) {
-                        this.placeIgnitionPoint(evt);
+            bindEvents() {
+                // 발화점 설정
+                this.canvas.addEventListener('click', (e) => {
+                    if (!this.running) {
+                        this.addIgnition(e);
                     }
                 });
                 
+                // 풍향 변경
                 document.getElementById('windDirection').addEventListener('change', (e) => {
-                    this.windDir = e.target.value;
-                    this.updateWindIndicator();
+                    this.wind = e.target.value;
+                    this.updateWindDisplay();
                 });
                 
+                // 습도 변경
                 document.getElementById('humidity').addEventListener('change', (e) => {
-                    this.moistureLevel = parseInt(e.target.value);
+                    this.moisture = parseInt(e.target.value);
                 });
                 
+                // 시작 버튼
                 document.getElementById('startSimulation').addEventListener('click', () => {
-                    this.startFireSimulation();
+                    this.start();
                 });
                 
+                // 일시정지 버튼
                 document.getElementById('pauseSimulation').addEventListener('click', () => {
-                    this.pauseFireSimulation();
+                    this.pause();
                 });
                 
+                // 초기화 버튼
                 document.getElementById('resetSimulation').addEventListener('click', () => {
-                    this.resetFireSimulation();
+                    this.reset();
                 });
             }
             
-            createTopDownTerrain() {
-                this.terrainMap = [];
-                
-                // 기본 초원으로 초기화
-                for (let y = 0; y < this.mapHeight; y++) {
-                    this.terrainMap[y] = [];
-                    for (let x = 0; x < this.mapWidth; x++) {
-                        this.terrainMap[y][x] = this.TERRAIN_TYPES.GRASSLAND;
+            generateWorld() {
+                // 모든 셀을 초원으로 초기화
+                this.terrain = [];
+                for (let y = 0; y < this.mapH; y++) {
+                    this.terrain[y] = [];
+                    for (let x = 0; x < this.mapW; x++) {
+                        this.terrain[y][x] = this.GRASS;
                     }
                 }
                 
-                // 산지 생성 (등고선 고려한 언덕/산)
-                this.generateMountainRanges();
+                // 산지 생성 (여러 개의 산)
+                this.createMountains();
                 
-                // 수풀/숲 지역 생성
-                this.generateForestAreas();
+                // 수풀 지역 생성
+                this.createForests(); 
                 
                 // 도로 네트워크 생성
-                this.generateRoadNetwork();
+                this.createRoads();
                 
-                // 건물/마을 생성
-                this.generateBuildings();
+                // 건물 클러스터 생성
+                this.createBuildings();
             }
             
-            generateMountainRanges() {
-                // 여러 개의 산 생성
-                const mountainCenters = [
-                    {x: Math.floor(this.mapWidth * 0.2), y: Math.floor(this.mapHeight * 0.3)},
-                    {x: Math.floor(this.mapWidth * 0.7), y: Math.floor(this.mapHeight * 0.2)},
-                    {x: Math.floor(this.mapWidth * 0.6), y: Math.floor(this.mapHeight * 0.8)}
+            createMountains() {
+                const peaks = [
+                    {x: Math.floor(this.mapW * 0.2), y: Math.floor(this.mapH * 0.3), r: 50},
+                    {x: Math.floor(this.mapW * 0.7), y: Math.floor(this.mapH * 0.2), r: 40},
+                    {x: Math.floor(this.mapW * 0.5), y: Math.floor(this.mapH * 0.8), r: 35}
                 ];
                 
-                for (let center of mountainCenters) {
-                    const mountainSize = 40 + Math.random() * 30;
-                    
-                    for (let y = center.y - mountainSize; y < center.y + mountainSize; y++) {
-                        for (let x = center.x - mountainSize; x < center.x + mountainSize; x++) {
-                            if (x >= 0 && x < this.mapWidth && y >= 0 && y < this.mapHeight) {
-                                const distance = Math.sqrt((x - center.x) ** 2 + (y - center.y) ** 2);
-                                const noise = (Math.random() - 0.5) * 15;
+                for (let peak of peaks) {
+                    for (let y = peak.y - peak.r; y <= peak.y + peak.r; y++) {
+                        for (let x = peak.x - peak.r; x <= peak.x + peak.r; x++) {
+                            if (x >= 0 && x < this.mapW && y >= 0 && y < this.mapH) {
+                                let dist = Math.sqrt((x - peak.x) ** 2 + (y - peak.y) ** 2);
+                                let noise = (Math.random() - 0.5) * 20;
                                 
-                                if (distance + noise < mountainSize) {
-                                    this.terrainMap[y][x] = this.TERRAIN_TYPES.MOUNTAIN;
+                                if (dist + noise < peak.r) {
+                                    this.terrain[y][x] = this.MOUNTAIN;
                                 }
                             }
                         }
@@ -402,21 +404,23 @@
                 }
             }
             
-            generateForestAreas() {
-                // 산지 주변과 랜덤 위치에 수풀 생성
-                for (let attempt = 0; attempt < 8; attempt++) {
-                    const centerX = Math.floor(Math.random() * this.mapWidth);
-                    const centerY = Math.floor(Math.random() * this.mapHeight);
-                    const forestSize = 20 + Math.random() * 25;
-                    
-                    for (let y = centerY - forestSize; y < centerY + forestSize; y++) {
-                        for (let x = centerX - forestSize; x < centerX + forestSize; x++) {
-                            if (x >= 0 && x < this.mapWidth && y >= 0 && y < this.mapHeight) {
-                                const distance = Math.sqrt((x - centerX) ** 2 + (y - centerY) ** 2);
+            createForests() {
+                const forestAreas = [
+                    {x: Math.floor(this.mapW * 0.1), y: Math.floor(this.mapH * 0.6), r: 30},
+                    {x: Math.floor(this.mapW * 0.8), y: Math.floor(this.mapH * 0.7), r: 25},
+                    {x: Math.floor(this.mapW * 0.4), y: Math.floor(this.mapH * 0.1), r: 20},
+                    {x: Math.floor(this.mapW * 0.6), y: Math.floor(this.mapH * 0.5), r: 35}
+                ];
+                
+                for (let area of forestAreas) {
+                    for (let y = area.y - area.r; y <= area.y + area.r; y++) {
+                        for (let x = area.x - area.r; x <= area.x + area.r; x++) {
+                            if (x >= 0 && x < this.mapW && y >= 0 && y < this.mapH) {
+                                let dist = Math.sqrt((x - area.x) ** 2 + (y - area.y) ** 2);
                                 
-                                if (distance < forestSize && Math.random() > 0.3) {
-                                    if (this.terrainMap[y][x] === this.TERRAIN_TYPES.GRASSLAND) {
-                                        this.terrainMap[y][x] = this.TERRAIN_TYPES.FOREST;
+                                if (dist < area.r && Math.random() > 0.4) {
+                                    if (this.terrain[y][x] === this.GRASS) {
+                                        this.terrain[y][x] = this.FOREST;
                                     }
                                 }
                             }
@@ -425,60 +429,59 @@
                 }
             }
             
-            generateRoadNetwork() {
-                // 수평 도로들
-                const horizontalRoads = [
-                    Math.floor(this.mapHeight * 0.25),
-                    Math.floor(this.mapHeight * 0.5),
-                    Math.floor(this.mapHeight * 0.75)
+            createRoads() {
+                // 수평 도로
+                let horizontals = [
+                    Math.floor(this.mapH * 0.25),
+                    Math.floor(this.mapH * 0.5),
+                    Math.floor(this.mapH * 0.75)
                 ];
                 
-                for (let roadY of horizontalRoads) {
-                    for (let x = 0; x < this.mapWidth; x++) {
-                        if (Math.random() > 0.1) { // 가끔 끊어지는 도로
-                            this.terrainMap[roadY][x] = this.TERRAIN_TYPES.ROAD;
-                            if (roadY > 0) this.terrainMap[roadY - 1][x] = this.TERRAIN_TYPES.ROAD;
+                for (let roadY of horizontals) {
+                    for (let x = 0; x < this.mapW; x++) {
+                        if (Math.random() > 0.05) {
+                            this.terrain[roadY][x] = this.ROAD;
+                            if (roadY > 0) this.terrain[roadY - 1][x] = this.ROAD;
                         }
                     }
                 }
                 
-                // 수직 도로들
-                const verticalRoads = [
-                    Math.floor(this.mapWidth * 0.3),
-                    Math.floor(this.mapWidth * 0.7)
+                // 수직 도로
+                let verticals = [
+                    Math.floor(this.mapW * 0.3),
+                    Math.floor(this.mapW * 0.7)
                 ];
                 
-                for (let roadX of verticalRoads) {
-                    for (let y = 0; y < this.mapHeight; y++) {
-                        if (Math.random() > 0.1) {
-                            this.terrainMap[y][roadX] = this.TERRAIN_TYPES.ROAD;
-                            if (roadX > 0) this.terrainMap[y][roadX - 1] = this.TERRAIN_TYPES.ROAD;
+                for (let roadX of verticals) {
+                    for (let y = 0; y < this.mapH; y++) {
+                        if (Math.random() > 0.05) {
+                            this.terrain[y][roadX] = this.ROAD;
+                            if (roadX > 0) this.terrain[y][roadX - 1] = this.ROAD;
                         }
                     }
                 }
             }
             
-            generateBuildings() {
-                // 도로 근처에 건물 클러스터 생성
-                const buildingClusters = [
-                    {x: Math.floor(this.mapWidth * 0.15), y: Math.floor(this.mapHeight * 0.4), size: 15},
-                    {x: Math.floor(this.mapWidth * 0.45), y: Math.floor(this.mapHeight * 0.6), size: 20},
-                    {x: Math.floor(this.mapWidth * 0.8), y: Math.floor(this.mapHeight * 0.3), size: 12}
+            createBuildings() {
+                const villages = [
+                    {x: Math.floor(this.mapW * 0.15), y: Math.floor(this.mapH * 0.4), count: 15},
+                    {x: Math.floor(this.mapW * 0.45), y: Math.floor(this.mapH * 0.6), count: 20},
+                    {x: Math.floor(this.mapW * 0.8), y: Math.floor(this.mapH * 0.3), count: 12}
                 ];
                 
-                for (let cluster of buildingClusters) {
-                    for (let attempt = 0; attempt < cluster.size; attempt++) {
-                        const buildingX = cluster.x + (Math.random() - 0.5) * 40;
-                        const buildingY = cluster.y + (Math.random() - 0.5) * 40;
+                for (let village of villages) {
+                    for (let i = 0; i < village.count; i++) {
+                        let houseX = village.x + (Math.random() - 0.5) * 60;
+                        let houseY = village.y + (Math.random() - 0.5) * 60;
                         
-                        const buildingWidth = 2 + Math.floor(Math.random() * 3);
-                        const buildingHeight = 2 + Math.floor(Math.random() * 3);
+                        let w = 2 + Math.floor(Math.random() * 4);
+                        let h = 2 + Math.floor(Math.random() * 4);
                         
-                        for (let by = buildingY; by < buildingY + buildingHeight; by++) {
-                            for (let bx = buildingX; bx < buildingX + buildingWidth; bx++) {
-                                if (bx >= 0 && bx < this.mapWidth && by >= 0 && by < this.mapHeight) {
-                                    if (this.terrainMap[Math.floor(by)][Math.floor(bx)] !== this.TERRAIN_TYPES.ROAD) {
-                                        this.terrainMap[Math.floor(by)][Math.floor(bx)] = this.TERRAIN_TYPES.BUILDING;
+                        for (let by = houseY; by < houseY + h; by++) {
+                            for (let bx = houseX; bx < houseX + w; bx++) {
+                                if (bx >= 0 && bx < this.mapW && by >= 0 && by < this.mapH) {
+                                    if (this.terrain[Math.floor(by)][Math.floor(bx)] !== this.ROAD) {
+                                        this.terrain[Math.floor(by)][Math.floor(bx)] = this.HOUSE;
                                     }
                                 }
                             }
@@ -487,214 +490,214 @@
                 }
             }
             
-            placeIgnitionPoint(clickEvent) {
-                const rect = this.canvas.getBoundingClientRect();
-                const clickX = Math.floor((clickEvent.clientX - rect.left) / this.pixelSize);
-                const clickY = Math.floor((clickEvent.clientY - rect.top) / this.pixelSize);
+            addIgnition(event) {
+                let rect = this.canvas.getBoundingClientRect();
+                let x = Math.floor((event.clientX - rect.left) / this.cellSize);
+                let y = Math.floor((event.clientY - rect.top) / this.cellSize);
                 
-                if (clickX >= 0 && clickX < this.mapWidth && clickY >= 0 && clickY < this.mapHeight) {
-                    const terrainType = this.terrainMap[clickY][clickX];
+                if (x >= 0 && x < this.mapW && y >= 0 && y < this.mapH) {
+                    let cell = this.terrain[y][x];
                     
-                    if (terrainType !== this.TERRAIN_TYPES.ROAD) {
-                        this.terrainMap[clickY][clickX] = this.TERRAIN_TYPES.FIRE;
-                        this.fireCells.push({x: clickX, y: clickY, burnTime: 0});
+                    if (cell !== this.ROAD) {
+                        this.terrain[y][x] = this.FIRE;
+                        this.fires.push({x: x, y: y, age: 0});
                         
-                        this.ignitionMarkers.push({
-                            x: clickX * this.pixelSize + this.pixelSize / 2,
-                            y: clickY * this.pixelSize + this.pixelSize / 2
+                        this.markers.push({
+                            x: x * this.cellSize + this.cellSize / 2,
+                            y: y * this.cellSize + this.cellSize / 2
                         });
                         
-                        this.drawTerrain();
-                        this.updateStatusMessage(`발화점 설정: (${clickX}, ${clickY})`);
+                        this.draw();
+                        this.updateStatus(`발화점 설정: (${x}, ${y})`);
                     }
                 }
             }
             
-            detectAABBCollision(box1, box2) {
-                return box1.x < box2.x + box2.width &&
-                       box1.x + box1.width > box2.x &&
-                       box1.y < box2.y + box2.height &&
-                       box1.y + box1.height > box2.y;
+            // AABB 충돌 감지 함수
+            aabbCollision(box1, box2) {
+                return box1.x < box2.x + box2.w &&
+                       box1.x + box1.w > box2.x &&
+                       box1.y < box2.y + box2.h &&
+                       box1.y + box1.h > box2.y;
             }
             
-            detectOBBCollision(center1, size1, center2, size2) {
-                const dx = Math.abs(center1.x - center2.x);
-                const dy = Math.abs(center1.y - center2.y);
-                return dx < (size1.width + size2.width) / 2 && 
-                       dy < (size1.height + size2.height) / 2;
+            // OBB 충돌 감지 함수
+            obbCollision(center1, size1, center2, size2) {
+                let dx = Math.abs(center1.x - center2.x);
+                let dy = Math.abs(center1.y - center2.y);
+                return dx < (size1.w + size2.w) / 2 && 
+                       dy < (size1.h + size2.h) / 2;
             }
             
-            spreadFireToNeighbors() {
-                const newFireCells = [];
-                const directions = this.getWindInfluencedDirections();
+            spreadFire() {
+                let newFires = [];
+                let directions = this.getWindDirections();
                 
-                for (let fireCell of this.fireCells) {
-                    const fireBox = {
-                        x: fireCell.x,
-                        y: fireCell.y,
-                        width: 1,
-                        height: 1
-                    };
+                for (let fire of this.fires) {
+                    // 현재 화재 셀의 충돌 박스
+                    let fireBox = {x: fire.x, y: fire.y, w: 1, h: 1};
                     
                     for (let dir of directions) {
-                        const targetX = fireCell.x + dir.dx;
-                        const targetY = fireCell.y + dir.dy;
+                        let targetX = fire.x + dir.dx;
+                        let targetY = fire.y + dir.dy;
                         
-                        if (targetX >= 0 && targetX < this.mapWidth && 
-                            targetY >= 0 && targetY < this.mapHeight) {
+                        if (targetX >= 0 && targetX < this.mapW && 
+                            targetY >= 0 && targetY < this.mapH) {
                             
-                            const targetBox = {
+                            // 대상 셀의 충돌 박스 (약간 확장하여 접촉 감지)
+                            let targetBox = {
                                 x: targetX - 0.1,
                                 y: targetY - 0.1,
-                                width: 1.2,
-                                height: 1.2
+                                w: 1.2,
+                                h: 1.2
                             };
                             
-                            if (this.detectAABBCollision(fireBox, targetBox)) {
-                                const targetTerrain = this.terrainMap[targetY][targetX];
+                            // AABB 충돌 감지로 인접성 확인
+                            if (this.aabbCollision(fireBox, targetBox)) {
+                                let targetTerrain = this.terrain[targetY][targetX];
                                 
-                                if (this.BURN_RATES[targetTerrain]) {
-                                    const burnChance = this.calculateBurnProbability(targetTerrain, dir.influence);
+                                if (this.burnChance[targetTerrain]) {
+                                    let spreadProb = this.calculateSpreadProbability(targetTerrain, dir.wind);
                                     
-                                    if (Math.random() < burnChance) {
-                                        this.terrainMap[targetY][targetX] = this.TERRAIN_TYPES.FIRE;
-                                        newFireCells.push({x: targetX, y: targetY, burnTime: 0});
+                                    if (Math.random() < spreadProb) {
+                                        this.terrain[targetY][targetX] = this.FIRE;
+                                        newFires.push({x: targetX, y: targetY, age: 0});
                                     }
                                 }
                             }
                         }
                     }
                     
-                    fireCell.burnTime++;
-                    if (fireCell.burnTime > 35) {
-                        this.terrainMap[fireCell.y][fireCell.x] = this.TERRAIN_TYPES.SMOKE;
+                    // 화재 노화
+                    fire.age++;
+                    if (fire.age > 40) {
+                        this.terrain[fire.y][fire.x] = this.SMOKE;
                     }
                 }
                 
-                this.fireCells = this.fireCells.filter(cell => cell.burnTime <= 35);
-                this.fireCells.push(...newFireCells);
+                // 오래된 화재 제거하고 새 화재 추가
+                this.fires = this.fires.filter(f => f.age <= 40);
+                this.fires.push(...newFires);
             }
             
-            getWindInfluencedDirections() {
-                const baseDirections = [
-                    {dx: -1, dy: -1, influence: 0.6}, {dx: 0, dy: -1, influence: 1.0}, {dx: 1, dy: -1, influence: 0.6},
-                    {dx: -1, dy: 0, influence: 1.0},                                    {dx: 1, dy: 0, influence: 1.0},
-                    {dx: -1, dy: 1, influence: 0.6},  {dx: 0, dy: 1, influence: 1.0},  {dx: 1, dy: 1, influence: 0.6}
+            getWindDirections() {
+                let base = [
+                    {dx: -1, dy: -1, wind: 0.7}, {dx: 0, dy: -1, wind: 1.0}, {dx: 1, dy: -1, wind: 0.7},
+                    {dx: -1, dy: 0, wind: 1.0},                               {dx: 1, dy: 0, wind: 1.0},
+                    {dx: -1, dy: 1, wind: 0.7},  {dx: 0, dy: 1, wind: 1.0},  {dx: 1, dy: 1, wind: 0.7}
                 ];
                 
-                const windBoost = 2.2;
+                let boost = 2.5; // 바람 가중치 증가!
                 
-                switch (this.windDir) {
-                    case 'north':
-                        baseDirections[6].influence *= windBoost;
-                        baseDirections[5].influence *= windBoost * 0.7;
-                        baseDirections[7].influence *= windBoost * 0.7;
-                        break;
-                    case 'south':
-                        baseDirections[1].influence *= windBoost;
-                        baseDirections[0].influence *= windBoost * 0.7;
-                        baseDirections[2].influence *= windBoost * 0.7;
-                        break;
-                    case 'east':
-                        baseDirections[3].influence *= windBoost;
-                        baseDirections[0].influence *= windBoost * 0.7;
-                        baseDirections[5].influence *= windBoost * 0.7;
-                        break;
-                    case 'west':
-                        baseDirections[4].influence *= windBoost;
-                        baseDirections[2].influence *= windBoost * 0.7;
-                        baseDirections[7].influence *= windBoost * 0.7;
-                        break;
+                // 바람 방향에 따른 가중치 적용
+                if (this.wind === 'north') {          // 북풍 -> 남쪽으로 확산
+                    base[6].wind *= boost;            // 남쪽
+                    base[5].wind *= boost * 0.8;      // 남서
+                    base[7].wind *= boost * 0.8;      // 남동
+                } else if (this.wind === 'south') {   // 남풍 -> 북쪽으로 확산
+                    base[1].wind *= boost;            // 북쪽
+                    base[0].wind *= boost * 0.8;      // 북서
+                    base[2].wind *= boost * 0.8;      // 북동
+                } else if (this.wind === 'east') {    // 동풍 -> 서쪽으로 확산
+                    base[3].wind *= boost;            // 서쪽
+                    base[0].wind *= boost * 0.8;      // 북서
+                    base[5].wind *= boost * 0.8;      // 남서
+                } else if (this.wind === 'west') {    // 서풍 -> 동쪽으로 확산
+                    base[4].wind *= boost;            // 동쪽
+                    base[2].wind *= boost * 0.8;      // 북동
+                    base[7].wind *= boost * 0.8;      // 남동
                 }
                 
-                return baseDirections;
+                return base;
             }
             
-            calculateBurnProbability(terrainType, windInfluence) {
-                const baseBurnRate = this.BURN_RATES[terrainType];
-                const humidityEffect = (6 - this.moistureLevel) / 5;
+            calculateSpreadProbability(terrainType, windEffect) {
+                let baseRate = this.burnChance[terrainType];
+                let humidityFactor = (6 - this.moisture) / 5;
                 
                 // 건물은 특별히 빠르게 번짐
-                if (terrainType === this.TERRAIN_TYPES.BUILDING) {
-                    return baseBurnRate * windInfluence * humidityEffect * 0.8;
+                if (terrainType === this.HOUSE) {
+                    return baseRate * windEffect * humidityFactor * 0.7;
                 }
                 
-                return baseBurnRate * windInfluence * humidityEffect * 0.4;
+                return baseRate * windEffect * humidityFactor * 0.4;
             }
             
-            updateWindIndicator() {
-                const windHighlight = {
-                    'north': 'compassS',
-                    'south': 'compassN', 
-                    'east': 'compassW',
-                    'west': 'compassE'
+            updateWindDisplay() {
+                let windMapping = {
+                    'north': 'compassS',   // 북풍이면 남쪽 화살표 강조
+                    'south': 'compassN',   // 남풍이면 북쪽 화살표 강조
+                    'east': 'compassW',    // 동풍이면 서쪽 화살표 강조
+                    'west': 'compassE'     // 서풍이면 동쪽 화살표 강조
                 };
                 
+                // 모든 방향 기본 스타일로 리셋
                 document.querySelectorAll('.compass div').forEach(el => {
                     el.style.color = 'white';
                     el.style.fontWeight = 'normal';
                 });
                 
-                const activeWind = document.getElementById(windHighlight[this.windDir]);
-                if (activeWind) {
-                    activeWind.style.color = '#ff6600';
-                    activeWind.style.fontWeight = 'bold';
+                // 현재 풍향 강조
+                let activeDir = document.getElementById(windMapping[this.wind]);
+                if (activeDir) {
+                    activeDir.style.color = '#ff6600';
+                    activeDir.style.fontWeight = 'bold';
                 }
             }
             
-            drawTerrain() {
+            draw() {
                 this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
                 
-                for (let y = 0; y < this.mapHeight; y++) {
-                    for (let x = 0; x < this.mapWidth; x++) {
-                        const terrain = this.terrainMap[y][x];
-                        let pixelColor;
+                for (let y = 0; y < this.mapH; y++) {
+                    for (let x = 0; x < this.mapW; x++) {
+                        let cell = this.terrain[y][x];
+                        let color;
                         
-                        switch (terrain) {
-                            case this.TERRAIN_TYPES.GRASSLAND:
-                                pixelColor = '#90EE90';  // 연한 초록 (초원)
+                        switch (cell) {
+                            case this.GRASS:
+                                color = '#90EE90';   // 연한 초록 (초원)
                                 break;
-                            case this.TERRAIN_TYPES.FOREST:
-                                pixelColor = '#228B22';  // 진한 초록 (수풀)
+                            case this.FOREST:
+                                color = '#228B22';   // 진한 초록 (수풀)
                                 break;
-                            case this.TERRAIN_TYPES.MOUNTAIN:
-                                pixelColor = '#8B7355';  // 갈색 (산지)
+                            case this.MOUNTAIN:
+                                color = '#8B7355';   // 갈색 (산지)
                                 break;
-                            case this.TERRAIN_TYPES.ROAD:
-                                pixelColor = '#696969';  // 회색 (도로)
+                            case this.ROAD:
+                                color = '#696969';   // 회색 (도로)
                                 break;
-                            case this.TERRAIN_TYPES.BUILDING:
-                                pixelColor = '#8B4513';  // 갈색 (건물)
+                            case this.HOUSE:
+                                color = '#8B4513';   // 갈색 (건물)
                                 break;
-                            case this.TERRAIN_TYPES.FIRE:
-                                pixelColor = '#FF0000';  // 빨강 (화재)
+                            case this.FIRE:
+                                color = '#FF0000';   // 빨강 (화재)
                                 break;
-                            case this.TERRAIN_TYPES.SMOKE:
-                                pixelColor = '#FF6600';  // 주황 (연기)
+                            case this.SMOKE:
+                                color = '#FF6600';   // 주황 (연기)
                                 break;
                             default:
-                                pixelColor = '#000000';
+                                color = '#000000';
                         }
                         
-                        this.ctx.fillStyle = pixelColor;
+                        this.ctx.fillStyle = color;
                         this.ctx.fillRect(
-                            x * this.pixelSize, 
-                            y * this.pixelSize, 
-                            this.pixelSize, 
-                            this.pixelSize
+                            x * this.cellSize, 
+                            y * this.cellSize, 
+                            this.cellSize, 
+                            this.cellSize
                         );
                     }
                 }
                 
-                this.drawIgnitionMarkers();
+                this.drawMarkers();
             }
             
-            drawIgnitionMarkers() {
+            drawMarkers() {
                 this.ctx.strokeStyle = '#ff6600';
                 this.ctx.lineWidth = 2;
                 this.ctx.setLineDash([4, 4]);
                 
-                for (let marker of this.ignitionMarkers) {
+                for (let marker of this.markers) {
                     this.ctx.beginPath();
                     this.ctx.arc(marker.x, marker.y, 12, 0, 2 * Math.PI);
                     this.ctx.stroke();
@@ -703,59 +706,62 @@
                 this.ctx.setLineDash([]);
             }
             
-            startFireSimulation() {
-                if (this.fireCells.length === 0) {
+            start() {
+                if (this.fires.length === 0) {
                     alert('먼저 발화점을 지정해주세요!');
                     return;
                 }
                 
-                this.simulationActive = true;
-                this.runSimulationCycle();
-                this.updateStatusMessage('시뮬레이션 실행 중...');
+                this.running = true;
+                this.simulate();
+                this.updateStatus('시뮬레이션 실행 중...');
             }
             
-            pauseFireSimulation() {
-                this.simulationActive = false;
-                if (this.loopTimer) {
-                    clearTimeout(this.loopTimer);
+            pause() {
+                this.running = false;
+                if (this.timer) {
+                    clearTimeout(this.timer);
+                    this.timer = null;
                 }
-                this.updateStatusMessage('시뮬레이션 일시정지');
+                this.updateStatus('시뮬레이션 일시정지');
             }
             
-            resetFireSimulation() {
-                this.simulationActive = false;
-                if (this.loopTimer) {
-                    clearTimeout(this.loopTimer);
+            reset() {
+                this.running = false;
+                if (this.timer) {
+                    clearTimeout(this.timer);
+                    this.timer = null;
                 }
-                this.fireCells = [];
-                this.ignitionMarkers = [];
-                this.createTopDownTerrain();
-                this.drawTerrain();
-                this.updateStatusMessage('시뮬레이션 초기화됨');
+                this.fires = [];
+                this.markers = [];
+                this.generateWorld();
+                this.draw();
+                this.updateStatus('시뮬레이션 초기화됨');
             }
             
-            runSimulationCycle() {
-                if (!this.simulationActive) return;
+            simulate() {
+                if (!this.running) return;
                 
-                this.spreadFireToNeighbors();
-                this.drawTerrain();
+                this.spreadFire();
+                this.draw();
                 
-                if (this.fireCells.length === 0) {
-                    this.simulationActive = false;
-                    this.updateStatusMessage('시뮬레이션 완료 - 모든 화재 진압됨');
+                if (this.fires.length === 0) {
+                    this.running = false;
+                    this.updateStatus('시뮬레이션 완료 - 모든 화재 진압됨');
                     return;
                 }
                 
-                this.loopTimer = setTimeout(() => this.runSimulationCycle(), this.updateDelay);
+                this.timer = setTimeout(() => this.simulate(), this.tickRate);
             }
             
-            updateStatusMessage(message) {
+            updateStatus(message) {
                 document.getElementById('statusDisplay').textContent = message;
             }
         }
         
+        // 시뮬레이터 시작
         document.addEventListener('DOMContentLoaded', function() {
-            new TopDownFireSimulator();
+            new WildfireSimulator();
         });
     </script>
 </body>
